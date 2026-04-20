@@ -331,6 +331,14 @@ describe('getMutationObserverScript', () => {
     expect(script).toContain("display: false");
   });
 
+  test('includes failsafe periodic re-scan guarded by isRendering and visibility', () => {
+    // Rescues messages whose DOM mutations the primary observer misses
+    // (e.g. React Portal / virtual list subtrees in Claude Code 2.1.x).
+    expect(script).toContain('setInterval');
+    expect(script).toContain('visibilityState');
+    expect(script).toMatch(/!isRendering[\s\S]*activeContainer[\s\S]*visibilityState/);
+  });
+
   test('ignores pre and code tags', () => {
     expect(script).toContain("'pre'");
     expect(script).toContain("'code'");

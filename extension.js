@@ -444,6 +444,26 @@ function getMutationObserverScript() {
     startObserving();
   }
 
+  // Failsafe periodic re-scan: catches mutations the primary observer misses.
+  // Claude Code 2.1.x appears to append some streamed message subtrees in ways
+  // that don't bubble up as childList/characterData mutations on activeContainer
+  // (likely React Portal or virtual-list mount points outside the observed
+  // subtree). Users see this as "new messages never render math until I switch
+  // conversations and back" — because switching re-mounts messagesContainer and
+  // triggers observeMessages() -> renderMath() as a full rescue scan.
+  //
+  // This timer automates that rescue. It does NOT replace or tune the primary
+  // debouncedRender path. Cost is near-zero because:
+  //   - isRendering guard prevents overlap with the primary observer
+  //   - visibilityState check skips background tabs
+  //   - preprocessMath finds no $ on nodes already converted to \(...\)
+  //   - renderMathInElement skips .katex nodes via ignoredClasses
+  setInterval(function() {
+    if (!isRendering && activeContainer && document.visibilityState === 'visible') {
+      renderMath();
+    }
+  }, 700);
+
   console.log('[KaTeX Patch] LaTeX rendering enabled');
 })();`;
 }
