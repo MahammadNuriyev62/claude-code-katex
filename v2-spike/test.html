@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>v2 spike</title>
+<link rel="stylesheet" href="/vendor/katex.min.css">
+<script src="/vendor/katex.min.js"></script>
+<script src="/v2-spike/remark-math-bundle.js"></script>
+</head>
+<body>
+<div id="out"></div>
+<script type="module">
+import React from 'https://esm.sh/react@18.3.1?bundle';
+import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client?bundle&deps=react@18.3.1';
+import Markdown from 'https://esm.sh/react-markdown@9.0.1?bundle&deps=react@18.3.1';
+
+const MD = `Inline: $x^2 + y^2 = z^2$ and $E = mc^2$.
+
+Display:
+
+$$\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}$$
+
+Backslash test: $\\{1, 2\\}$ with $\\,$ thin space.
+
+Currency: it costs $100 and $200.`;
+
+const root = createRoot(document.getElementById('out'));
+root.render(React.createElement(Markdown, {
+  remarkPlugins: [window.__remarkMath],
+  rehypePlugins: [window.__rehypeKatex],
+}, MD));
+
+window.__DONE = true;
+</script>
+</body>
+</html>
