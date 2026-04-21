@@ -340,56 +340,48 @@ function getMutationObserverScript() {
     }
   }
 
-  // Process only newly added nodes instead of the whole container
-  function renderNewNodes(mutations) {
+  // Render dirty assistant messages. Each mutation inside messagesContainer
+  // belongs to some assistant message subtree; we collect those, dedupe, and
+  // render each one. Rendering is idempotent: renderMathInElement skips .katex
+  // nodes via ignoredClasses, and preprocessMath returns early on blocks with
+  // no '$'. So re-rendering already-rendered content is effectively free.
+  function renderDirtyMessages(mutations) {
     if (isRendering) return;
     if (typeof renderMathInElement !== 'function') return;
+    var container = document.querySelector(SELECTOR);
+    if (!container) return;
 
-    var nodesToRender = [];
+    var dirty = new Set();
     for (var i = 0; i < mutations.length; i++) {
-      var m = mutations[i];
-      if (m.type === 'characterData') {
-        // Text changed in an existing node - render its parent element
-        var parentEl = m.target.parentElement;
-        if (parentEl && !parentEl.closest('.katex,.katex-display') && hasMathContent(parentEl)) {
-          nodesToRender.push(parentEl);
-        }
-      } else if (m.addedNodes.length > 0) {
-        for (var j = 0; j < m.addedNodes.length; j++) {
-          var node = m.addedNodes[j];
-          if (node.nodeType === 1 && !node.classList.contains('katex') &&
-              !node.classList.contains('katex-display') && hasMathContent(node)) {
-            nodesToRender.push(node);
-          }
-        }
-      }
+      var target = mutations[i].target;
+      var el = target.nodeType === 1 ? target : target.parentElement;
+      if (!el || !el.isConnected) continue;
+      if (el.closest('.katex,.katex-display')) continue;
+      var msg = el.closest('[data-testid=\"assistant-message\"]');
+      dirty.add(msg || container);
     }
 
-    if (nodesToRender.length === 0) return;
+    if (dirty.size === 0) return;
 
     isRendering = true;
     try {
-      // Deduplicate: skip nodes that are children of other nodes in the list
-      var unique = nodesToRender.filter(function(node, idx) {
-        for (var k = 0; k < nodesToRender.length; k++) {
-          if (k !== idx && nodesToRender[k].contains(node)) return false;
-        }
-        return node.isConnected !== false; // skip detached nodes
-      });
-
-      for (var n = 0; n < unique.length; n++) {
-        renderElement(unique[n]);
-      }
+      dirty.forEach(function(el) { renderElement(el); });
     } finally {
       isRendering = false;
     }
   }
 
+  var pendingMutations = [];
   function debouncedRender(mutations) {
+    if (mutations && mutations.length) {
+      for (var i = 0; i < mutations.length; i++) pendingMutations.push(mutations[i]);
+    }
     if (renderTimeout) clearTimeout(renderTimeout);
     renderTimeout = setTimeout(function() {
-      if (mutations && mutations.length > 0) {
-        renderNewNodes(mutations);
+      var batch = pendingMutations;
+      pendingMutations = [];
+      if (batch.length > 0) {
+        renderDirtyMessages(batch);
       } else {
         renderMath();
       }

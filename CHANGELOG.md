@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.7.2] - 2026-04-21
+
+### Fixed
+- Streaming messages with multiple math expressions now render all math, not just the last paragraph. Previously, rapid `characterData` mutations during streaming would overwrite the debounce closure's `mutations` argument, so only the last batch was processed — most paragraphs' math was never rendered and the message stayed as raw `$...$` until the user reloaded the window.
+
+### Changed
+- `renderNewNodes` replaced by `renderDirtyMessages`, which walks up from each mutation target to its `[data-testid="assistant-message"]` ancestor and renders the whole message. Handles characterData mutations, text-node additions, and element additions uniformly. No more `nodeType === 1` filter that silently skipped text-node additions.
+- Mutations now accumulate across debounce callbacks (`pendingMutations`) instead of the closure capturing only the latest batch.
+
 ## [1.7.1] - 2026-04-03
 
 ### Added

@@ -359,10 +359,20 @@ describe('getMutationObserverScript', () => {
     expect(script).toContain('messageObserver.observe(activeContainer');
   });
 
-  test('processes only newly added nodes when possible', () => {
-    expect(script).toContain('renderNewNodes');
-    expect(script).toContain('m.addedNodes');
-    expect(script).toContain('node.isConnected');
+  test('bubbles mutations up to assistant-message boundary for per-message rendering', () => {
+    expect(script).toContain('renderDirtyMessages');
+    // Every mutation target is walked up to its assistant-message ancestor
+    // so that characterData mutations, text-node additions, and element
+    // additions are all handled uniformly. Falls back to the full container
+    // if the mutation isn't inside an assistant message.
+    expect(script).toContain('assistant-message');
+  });
+
+  test('accumulates mutations across debounced callbacks instead of overwriting', () => {
+    // Fixes a bug where the mutations closure captured only the latest batch,
+    // so rapid streaming callbacks would drop earlier mutations and most
+    // paragraphs would never get a render pass.
+    expect(script).toContain('pendingMutations');
   });
 
   test('checks hasMathContent before rendering a node', () => {

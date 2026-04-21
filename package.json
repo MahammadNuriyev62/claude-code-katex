@@ -1,8 +1,8 @@
 {
   "name": "claude-code-katex",
-  "displayName": "Claude Code KaTeX",
-  "description": "Adds LaTeX math rendering to Claude Code chat using KaTeX",
-  "version": "1.7.1",
+  "displayName": "Claude Code LaTeX (KaTeX)",
+  "description": "Adds LaTeX math rendering to Claude Code chat using KaTeX — inline $...$, display $$...$$, and \\(...\\) / \\[...\\]",
+  "version": "1.7.2",
   "publisher": "nuriyev",
   "license": "MIT",
   "icon": "icon.png",
@@ -17,13 +17,16 @@
     "Other"
   ],
   "keywords": [
-    "claude",
-    "katex",
     "latex",
     "math",
-    "rendering",
+    "mathematics",
+    "equations",
+    "katex",
+    "claude",
+    "claude-code",
     "anthropic",
-    "claude-code"
+    "markdown",
+    "rendering"
   ],
   "galleryBanner": {
     "color": "#1e1e2e",
