@@ -18,6 +18,57 @@
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
 
+// Escape every single `$` that is NOT part of a valid inline-math pair, so
+// currency ($100, $5M, "$100 is less than $200", "$50-$100") stays literal
+// while real math keeps working — including math whose content starts with a
+// digit ($10^{-4}$), which the old /\$(?=\d)/ rule wrongly killed by escaping
+// a legitimate *opening* delimiter.
+//
+// Mirrors Pandoc's tex_math_dollars flanking rules for a single-$ inline span:
+//   - an opening `$` must be immediately followed by a non-space character;
+//   - a closing `$` must be immediately preceded by a non-space character and
+//     must NOT be immediately followed by a digit.
+// Currency never satisfies the closing-side rules (amounts are space- or
+// digit-flanked at the second `$`), so it is left as literal text. `$$` display
+// delimiters and already-escaped `\$` are skipped. Implemented with plain
+// scans rather than lookbehind so it does not depend on RegExp lookbehind.
+function escapeCurrencyDollars(line) {
+  const isSpace = c => c === undefined || /\s/.test(c);
+  const isDigit = c => c >= '0' && c <= '9'; // c === undefined -> false
+
+  // Collect single-`$` delimiter positions.
+  const singles = [];
+  for (let k = 0; k < line.length; k++) {
+    if (line[k] !== '$') continue;
+    if (line[k + 1] === '$') { k++; continue; } // `$$` -> display, leave it
+    if (line[k - 1] === '\\') continue;         // already escaped `\$`
+    singles.push(k);
+  }
+
+  // Pair left-to-right honoring the flanking rules; record valid delimiters.
+  const valid = new Set();
+  let open = -1;
+  for (const pos of singles) {
+    const canOpen = !isSpace(line[pos + 1]);
+    if (open === -1) {
+      if (canOpen) open = pos;
+    } else if (!isSpace(line[pos - 1]) && !isDigit(line[pos + 1])) {
+      valid.add(open); valid.add(pos); open = -1; // valid close
+    } else {
+      open = canOpen ? pos : -1;                  // bad close; maybe a new open
+    }
+  }
+
+  // Escape the unpaired single `$`.
+  let out = '';
+  for (let k = 0; k < line.length; k++) {
+    if (line[k] === '$' && line[k + 1] === '$') { out += '$$'; k++; continue; }
+    if (line[k] === '$' && line[k - 1] !== '\\' && !valid.has(k)) { out += '\\$'; continue; }
+    out += line[k];
+  }
+  return out;
+}
+
 // --- \[ \] and \( \) support, plus currency disambiguation ----------------
 //
 // remark-math only knows $ and $$. Claude also emits \[...\] (display) and
@@ -37,9 +88,7 @@ function normalizeMathDelims(src) {
       continue;
     }
     if (inFence) continue;
-    let line = lines[i]
-      // currency: a lone `$` immediately before a digit ($100, $5) is not math
-      .replace(/(?<![$\\])\$(?!\$)(?=\d)/g, '\\$')
+    let line = escapeCurrencyDollars(lines[i])
       // \[ \] -> $$ (display); \( \) -> $ (inline). The (?<!\\) guard keeps
       // amsmath row separators (`\\[6pt]`, `\\[1em]`, ...) from having their
       // `[` consumed: without it, `\\[6pt]` becomes `\$$6pt]` and the math

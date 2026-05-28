@@ -427,6 +427,30 @@ test.describe('Currency $ vs math $ disambiguation', () => {
     expect(r.katex).toBeGreaterThanOrEqual(1);
   });
 
+  // --- Digit-leading math WITH a valid closing $ must render. Pandoc only
+  //     blocks currency on the closing side, so $10^{-4}$ is legal math. ---
+
+  test('$10^{-4}$ renders (digit-leading content)', async ({ page }) => {
+    const r = await injectAndCheck(page, 'Around $10^{-4}$ in magnitude.', RENDER_WAIT);
+    expect(r.katex).toBeGreaterThanOrEqual(1);
+  });
+
+  test('$10^{-4}\\text{–}10^{-5}$ renders as one span', async ({ page }) => {
+    const r = await injectAndCheck(page, 'The range $10^{-4}\\text{–}10^{-5}$ here.', RENDER_WAIT);
+    expect(r.katex).toBeGreaterThanOrEqual(1);
+  });
+
+  test('$2x$ renders (digit-leading but valid math)', async ({ page }) => {
+    const r = await injectAndCheck(page, 'Compute $2x$ now.', RENDER_WAIT);
+    expect(r.katex).toBeGreaterThanOrEqual(1);
+  });
+
+  test('currency and digit-math coexist on one line', async ({ page }) => {
+    const r = await injectAndCheck(page, 'About $5 and then $10^{-4}$ each.', RENDER_WAIT);
+    expect(r.katex).toBeGreaterThanOrEqual(1); // the math span renders
+    expect(r.text).toContain('$5');            // the currency stays literal
+  });
+
   test('$$...$ (display math) still works', async ({ page }) => {
     const r = await injectAndCheck(page, '$$\\int_0^1 f(x) dx$$', RENDER_WAIT);
     expect(r.katexDisplay).toBeGreaterThanOrEqual(1);
