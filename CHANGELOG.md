@@ -1,5 +1,55 @@
 # Changelog
 
+## [2.0.3] - 2026-06-01
+
+### Fixed
+- **Inline math whose content starts with a digit now renders** — `$10^{-4}$`,
+  `$2x$`, `$3t^2-2t^3$`, `$2x + y - z = 8$`. The v1.5 currency rule escaped
+  *every* `$` immediately before a digit, which killed a legitimate *opening*
+  delimiter and unbalanced the rest of the line. Replaced with Pandoc-style
+  flanking rules: only a *closing* `$` that is preceded by a space or followed by
+  a digit is treated as currency, so amounts (`$100`, `$5M`, `$50-$100`,
+  `$3.50`) stay literal while digit-leading math renders.
+  ([#9](https://github.com/MahammadNuriyev62/claude-code-katex/pull/9) — thanks @ReHoss)
+- **Currency `$`s no longer pair across prose into a spurious math span.** Text
+  like `"… in front ($5), but writing it after (5$) …"` previously turned
+  *"5), but writing it after (5"* into italic math, because a digit-leading
+  currency `$` is a valid math *opener* under the flanking rules. Now a
+  digit-leading `$…$` span is rejected as currency only when its content reads
+  like prose (two adjacent multi-letter words). This keeps real digit-leading
+  math — including spaced equations like `$2x + y - z = 8$` — rendering, while
+  currency discussions stay literal. Non-digit-leading math (`$a + b = c$`) is
+  untouched.
+- **Display math with `\tag{…}` now renders** instead of showing a KaTeX error.
+  A whole-line `$$…$$` was parsed as *inline* math, but KaTeX's `\tag` (and
+  `\tag*`) works only in display mode. Whole-line `$$…$$` and `\[…\]` are now
+  exploded onto their own lines so they parse as flow/display math — `\tag`
+  works and display equations render as proper centered blocks.
+  ([#8](https://github.com/MahammadNuriyev62/claude-code-katex/issues/8))
+
+### Development
+- **Containerized test environment.** A single Docker image (`Dockerfile`,
+  `docker/`) now runs all three test levels reproducibly, replacing reliance on a
+  hand-maintained remote VS Code: L1 (jest) and L2 (the `v2-spike/test.html`
+  rendering harness) need no secrets; L3 runs the real extension patching the
+  real Claude Code in code-server and asserts KaTeX renders in the live webview.
+  A token-free `smoke` target verifies the patch applies on activation. L3 auth
+  uses a `claude setup-token` subscription token (not a metered API key). The
+  image disables Workspace Trust, without which Claude Code (which declares
+  `untrustedWorkspaces.supported = false`) and this extension never activate. See
+  `docker/README.md`.
+
+### Removed
+- **Dead v1 test infrastructure.** The `test-ui/` suite (Playwright specs +
+  harnesses + lightning.ai-hardcoded manual drivers), which tested the removed v1
+  DOM-MutationObserver path via `_test.getMutationObserverScript()` (gone since
+  2.0.0) and failed against v2, plus `playwright.config.js`, the `test:ui` /
+  `build:react-harness` scripts, and the now-unused `react`, `react-dom`,
+  `react-markdown`, `remark-gfm`, and `jsdom` devDependencies.
+- **`install.sh` / `uninstall.sh`** — the old manual v1 patch installer/remover.
+  Installation is via the Marketplace; uninstall cleanup is handled by
+  `uninstall-hook.js` (the `vscode:uninstall` hook).
+
 ## [2.0.0] - 2026-05-19
 
 ### Changed

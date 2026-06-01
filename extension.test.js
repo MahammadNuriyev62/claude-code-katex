@@ -703,7 +703,7 @@ describe('Status command', () => {
     activate(context);
     mockGetExtension.mockReturnValue(undefined);
     getHandler('claude-code-katex.status')();
-    expect(mockShowInformationMessage).toHaveBeenCalledWith('Claude Code extension not found.');
+    expect(mockShowInformationMessage).toHaveBeenCalledWith(expect.stringContaining('Claude Code extension not found.'));
   });
 });
 

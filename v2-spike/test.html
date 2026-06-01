@@ -152,6 +152,101 @@ $$`,
   ['EDGE 26 — lone unmatched $ degrades gracefully', R`A single $ dollar sign with no closing delimiter at all.`,
     el => [kx(el) === 0 && err(el) === 0 && el.textContent.includes('$'),
            kx(el) + ' katex (want 0), ' + err(el) + ' err, text kept=' + el.textContent.includes('$')]],
+
+  // ===== PR #9 — digit-leading inline math vs currency (Pandoc flanking) =====
+  ['PR#9 27 — $10^{-4}$ digit-leading inline renders', R`Around $10^{-4}$ in magnitude.`,
+    el => [kx(el) === 1 && err(el) === 0, kx(el) + ' katex (want 1), ' + err(el) + ' err']],
+
+  ['PR#9 28 — two spans on one line: $3t^2-2t^3$ … ($C^1$)', R`$3t^2-2t^3$ only zeroes the **first** derivative ($C^1$).`,
+    el => [kx(el) === 2 && err(el) === 0, kx(el) + ' katex (want 2), ' + err(el) + ' err']],
+
+  ['PR#9 29 — currency $5 and math $10^{-4}$ coexist', R`About $5 and then $10^{-4}$ each.`,
+    el => [kx(el) === 1 && err(el) === 0 && el.textContent.includes('$5'),
+           kx(el) + ' katex (want 1), $5 literal=' + el.textContent.includes('$5')]],
+
+  ['PR#9 30 — pure currency $100 / $5M stays literal', R`It costs $100 or $5M total.`,
+    el => [kx(el) === 0 && el.textContent.includes('$100') && el.textContent.includes('$5M'),
+           kx(el) + ' katex (want 0), text=' + JSON.stringify(el.textContent)]],
+
+  ['PR#9 31 — $50-$100 range stays literal', R`Budget is $50-$100 per seat.`,
+    el => [kx(el) === 0 && el.textContent.includes('$50') && el.textContent.includes('$100'),
+           kx(el) + ' katex (want 0), text=' + JSON.stringify(el.textContent)]],
+
+  ['PR#9 32 — $2x$ simple digit-leading inline', R`Compute $2x$ now.`,
+    el => [kx(el) === 1 && err(el) === 0, kx(el) + ' katex (want 1), ' + err(el) + ' err']],
+
+  // ===== Issue #8 — display math with \tag{...} =====
+  ['ISSUE#8 33 — minimal \\tag{1} display', R`$$x = 1 \tag{1}$$`,
+    el => [kx(el) >= 1 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
+
+  ['ISSUE#8 34 — \\tag{★} unicode star (formula 1)', R`$$A = \sum_{k=1}^n \lambda_k \cdot v_k \overline{v_k'} \tag{★}$$`,
+    el => [kx(el) >= 1 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
+
+  ['ISSUE#8 35 — \\lambda_k^*(A) with \\tag{2} (formula 2)', R`$$A^* = \sum_{k=1}^n \lambda_k^*(A) \cdot v_k \overline{v_k'} \tag{2}$$`,
+    el => [kx(el) >= 1 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
+
+  ['ISSUE#8 36 — \\prod_{j \\neq k} with \\tag{3} (formula 3)', R`$$(\lambda I_n - A)^* = \sum_{k=1}^n \left(\prod_{j \neq k} (\lambda - \lambda_j)\right) \cdot v_k \overline{v_k'} \tag{3}$$`,
+    el => [kx(el) >= 1 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
+
+  // ===== Issue #8 — deeper \tag / display-mode coverage =====
+  ['ISSUE#8 37 — whole-line $$\\tag$$ becomes DISPLAY (.katex-display)', R`$$\int_0^1 x\,dx \tag{2}$$`,
+    el => [el.querySelectorAll('.katex-display').length === 1 && err(el) === 0,
+           el.querySelectorAll('.katex-display').length + ' display, ' + err(el) + ' err']],
+
+  ['ISSUE#8 38 — \\tag*{!} starred variant', R`$$E = mc^2 \tag*{!}$$`,
+    el => [kx(el) >= 1 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
+
+  ['ISSUE#8 39 — already-block $$\\n…\\tag{1}\\n$$ still renders display', R`$$
+E = mc^2 \tag{1}
+$$`,
+    el => [el.querySelectorAll('.katex-display').length === 1 && err(el) === 0,
+           el.querySelectorAll('.katex-display').length + ' display, ' + err(el) + ' err']],
+
+  ['ISSUE#8 40 — \\[ … \\tag{1} … \\] bracket display + tag', R`\[ a^2 + b^2 = c^2 \tag{1} \]`,
+    el => [kx(el) >= 1 && err(el) === 0 && el.querySelectorAll('.katex-display').length === 1,
+           kx(el) + ' katex, ' + el.querySelectorAll('.katex-display').length + ' display, ' + err(el) + ' err']],
+
+  ['ISSUE#8 41 — inline $…\\tag…$ MUST still degrade (tag illegal inline)', R`Inline $a+b$ then text.`,
+    el => [kx(el) === 1 && err(el) === 0, kx(el) + ' katex (want 1, no tag), ' + err(el) + ' err']],
+
+  // ===== PR #9 — deeper currency coverage =====
+  ['PR#9 42 — $3.50 decimal currency literal', R`Coffee is $3.50 today.`,
+    el => [kx(el) === 0 && el.textContent.includes('$3.50'),
+           kx(el) + ' katex (want 0), text=' + JSON.stringify(el.textContent)]],
+
+  ['PR#9 43 — two currencies + one math ($100, $200, $x$)', R`Pay $100 or $200, given $x$.`,
+    el => [kx(el) === 1 && el.textContent.includes('$100') && el.textContent.includes('$200'),
+           kx(el) + ' katex (want 1), text=' + JSON.stringify(el.textContent)]],
+
+  ['PR#9 44 — display math unaffected by currency pass: $$x=5$$', R`$$x = 5$$`,
+    el => [kx(el) === 1 && err(el) === 0 && el.querySelectorAll('.katex-display').length === 1,
+           kx(el) + ' katex, ' + el.querySelectorAll('.katex-display').length + ' display, ' + err(el) + ' err']],
+
+  // ===== Currency-vs-math across prose (the "5$" regression) =====
+  ['PR#9 45 — "($5)…(5$)" prose must NOT form a math span', R`The sign goes in front ($5), but writing it after (5$) is common.`,
+    el => [kx(el) === 0 && el.textContent.includes('$5') && el.textContent.includes('5$'),
+           kx(el) + ' katex (want 0), text=' + JSON.stringify(el.textContent)]],
+
+  ['PR#9 46 — full "5$" discussion paragraph stays literal', R`5$ is another way of writing $5 — five dollars. Normally it goes in front ($5), but after (5$) is also seen.`,
+    el => [kx(el) === 0 && err(el) === 0,
+           kx(el) + ' katex (want 0), ' + err(el) + ' err']],
+
+  ['PR#9 47 — trailing "5$?" is not math', R`what about 5$?`,
+    el => [kx(el) === 0 && el.textContent.includes('5$'),
+           kx(el) + ' katex (want 0), text=' + JSON.stringify(el.textContent)]],
+
+  // --- regression guards: these MUST still render after the currency filter ---
+  ['PR#9 48 — spaced non-digit math still renders ($a + b = c$)', R`We know $a + b = c$ holds.`,
+    el => [kx(el) === 1 && err(el) === 0, kx(el) + ' katex (want 1), ' + err(el) + ' err']],
+
+  ['PR#9 49 — math ending in a digit still renders ($x = 5$)', R`Let $x = 5$ for now.`,
+    el => [kx(el) === 1 && err(el) === 0, kx(el) + ' katex (want 1), ' + err(el) + ' err']],
+
+  ['PR#9 50 — digit-leading SPACED math renders ($2x + y - z = 8$)', R`Solve $2x + y - z = 8$ for x.`,
+    el => [kx(el) === 1 && err(el) === 0, kx(el) + ' katex (want 1), ' + err(el) + ' err']],
+
+  ['PR#9 51 — digit-leading equation with spaces, standalone ($3a - 2b = 12$)', R`Then $3a - 2b = 12$ follows.`,
+    el => [kx(el) === 1 && err(el) === 0, kx(el) + ' katex (want 1), ' + err(el) + ' err']],
 ];
 
 const out = document.getElementById('out');

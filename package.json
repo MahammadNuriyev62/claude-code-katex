@@ -2,7 +2,7 @@
   "name": "claude-code-katex",
   "displayName": "Claude Code LaTeX",
   "description": "Adds LaTeX math rendering to Claude Code chat — inline $...$, display $$...$$, and \\(...\\) / \\[...\\]",
-  "version": "2.0.0",
+  "version": "2.0.3",
   "publisher": "nuriyev",
   "license": "MIT",
   "icon": "icon.png",
@@ -54,8 +54,6 @@
   },
   "scripts": {
     "test": "jest",
-    "test:ui": "npm run build:react-harness && npx playwright test",
-    "build:react-harness": "esbuild test-ui/react-harness-entry.js --bundle --outfile=test-ui/react-harness-bundle.js --format=iife --target=es2020 --define:process.env.NODE_ENV='\"production\"'",
     "build:bundle": "esbuild v2-spike/entry.js --bundle --format=iife --minify --alias:katex=./v2-spike/katex-global-shim.js --outfile=vendor/remark-math-bundle.js",
     "vscode:uninstall": "node ./uninstall-hook.js"
   },
@@ -69,21 +67,15 @@
   "homepage": "https://github.com/MahammadNuriyev62/claude-code-katex#readme",
   "jest": {
     "testPathIgnorePatterns": [
-      "/node_modules/",
-      "/test-ui/"
+      "/node_modules/"
     ]
   },
   "devDependencies": {
     "@playwright/test": "^1.58.2",
     "esbuild": "^0.25.0",
     "jest": "^30.3.0",
-    "jsdom": "^29.0.1",
     "katex": "^0.16.11",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "react-markdown": "^9.0.1",
     "rehype-katex": "^7.0.1",
-    "remark-gfm": "^4.0.0",
     "remark-math": "^6.0.0"
   }
 }

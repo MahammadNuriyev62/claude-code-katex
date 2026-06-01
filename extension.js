@@ -317,12 +317,23 @@ function activate(context) {
     vscode.commands.registerCommand('claude-code-katex.status', function() {
       const dir = findClaudeCodeExtDir();
       if (!dir) {
-        vscode.window.showInformationMessage('Claude Code extension not found.');
+        vscode.window.showInformationMessage(
+          'Claude Code LaTeX v' + EXTENSION_VERSION + ': Claude Code extension not found.');
         return;
       }
+      // Show the extension version AND the version stamped into the applied
+      // patch, so it is clear whether the running webview carries this build.
+      let status;
+      if (!isPatched(dir)) {
+        status = 'Not active — reload the window to apply';
+      } else {
+        const patchVer = getPatchedVersion(dir);
+        if (patchVer === EXTENSION_VERSION) status = 'Active — patch up to date';
+        else if (patchVer) status = 'Active — applied patch is v' + patchVer + ' (older than the extension); reload to refresh';
+        else status = 'Active — applied patch predates version stamping; reload to refresh';
+      }
       vscode.window.showInformationMessage(
-        'Claude Code LaTeX: ' + (isPatched(dir) ? 'Active' : 'Not active') +
-        '\nExtension: ' + dir
+        'Claude Code LaTeX v' + EXTENSION_VERSION + '\n' + status + '\nClaude Code: ' + dir
       );
     })
   );
@@ -337,8 +348,13 @@ function activate(context) {
   function refreshStatusBar() {
     const dir = findClaudeCodeExtDir();
     if (dir && isPatched(dir)) {
+      const patchVer = getPatchedVersion(dir);
+      const fresh = patchVer === EXTENSION_VERSION;
       statusBarItem.text = '$(symbol-operator) LaTeX';
-      statusBarItem.tooltip = 'Claude Code LaTeX is active. Click for status.';
+      statusBarItem.tooltip = 'Claude Code LaTeX v' + EXTENSION_VERSION +
+        (fresh ? ' — active (up to date)'
+               : ' — active (patch ' + (patchVer ? 'v' + patchVer : 'unversioned') + '; reload to refresh)') +
+        '. Click for status.';
     } else if (dir) {
       statusBarItem.text = '$(symbol-operator) LaTeX (off)';
       statusBarItem.tooltip = 'Claude Code LaTeX is not patched. Run "Claude Code LaTeX: Enable" or reload after install.';
