@@ -1,0 +1,18 @@
+# Keep the host's node_modules out of the image — `npm ci` installs the correct
+# linux build inside; copying macOS/arm host modules over it would break native deps.
+node_modules
+
+# Build/test artifacts — regenerated inside the container.
+*.vsix
+test-results
+playwright-report
+
+# VCS / local noise.
+.git
+.gitignore
+*.log
+.DS_Store
+
+# Backups produced by the on-disk patch (never relevant to a fresh build).
+*.katex-bak
+*.bak

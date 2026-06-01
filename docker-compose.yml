@@ -1,0 +1,21 @@
+# Convenience wrapper around the test image. See docker/README.md.
+#
+#   docker compose run --rm tests          # L1 + L2 (no secrets)
+#   CLAUDE_CODE_OAUTH_TOKEN=$(claude setup-token) docker compose run --rm tests all
+#
+# CLAUDE_CODE_OAUTH_TOKEN is read from the host environment (or a .env file) and
+# is required only for Level 3.
+services:
+  tests:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: claude-code-katex-tests
+    environment:
+      # Empty unless set on the host; L3 checks for it and errors clearly if missing.
+      CLAUDE_CODE_OAUTH_TOKEN: "${CLAUDE_CODE_OAUTH_TOKEN:-}"
+    # Expose code-server only when you want to watch the L3 run in a browser.
+    ports:
+      - "8080:8080"
+    # Default to the no-secret levels; override on the CLI (e.g. `... run tests all`).
+    command: ["ci"]
