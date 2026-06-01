@@ -1,13 +1,9 @@
 .git/**
 node_modules/**
-install.sh
-uninstall.sh
 .gitignore
 .env
 *.test.js
-test-ui/**
 test-results/**
-playwright.config.js
 .playwright-mcp/**
 package-lock.json
 claude-code-katex-*.vsix
@@ -18,3 +14,7 @@ claude-code-latex-demo.gif
 claude-code-latex-demo.mp4
 _*.js
 _*.mjs
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker/**
