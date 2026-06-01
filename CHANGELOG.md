@@ -1,8 +1,13 @@
 # Changelog
 
-## [2.0.4] - 2026-06-01
+## [2.0.5] - 2026-06-01
 
 ### Fixed
+- **`\leftroot` / `\uproot` no longer break a root.** KaTeX does not implement
+  these amsmath root-index positioning commands and errors on them, so
+  `\sqrt[\leftroot-2\uproot2 n]{…}` showed a red parse error. They are purely
+  cosmetic, so the pipeline now strips them (with their braced or unbraced numeric
+  argument) and the expression renders as a normal `\sqrt[n]{…}`.
 - **Display math with `\tag{…}` renders in every context.** Whole-line `$$…$$`,
   equations sharing a line with prose (`The result is $$…\tag{1}$$`), and
   equations as list items (`- $$…\tag{1}$$`) are all now moved onto their own

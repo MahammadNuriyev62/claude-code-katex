@@ -265,6 +265,14 @@ $$C = \nu_k \tag{3}$$`,
 
   ['CTX 55 — tagged $$ with text prefix on the same line', R`The result is $$E = mc^2 \tag{1}$$ shown here.`,
     el => [kx(el) >= 1 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
+
+  // KaTeX does not implement \leftroot / \uproot — strip them so the root still renders.
+  ['CTX 56 — \\leftroot/\\uproot (unbraced) degrade to \\sqrt[n]', R`$$\sqrt[\leftroot-2\uproot2n]{\frac{x^n}{yz}} \xrightarrow{n\to\infty} 1 \tag{20}$$`,
+    el => [kx(el) >= 1 && err(el) === 0 && el.querySelectorAll('.katex-display').length === 1,
+           kx(el) + ' katex, ' + err(el) + ' err, ' + el.querySelectorAll('.katex-display').length + ' display']],
+
+  ['CTX 57 — \\leftroot/\\uproot (braced) degrade to \\sqrt[n]', R`$$\sqrt[\leftroot{-2}\uproot{2}n]{\frac{x}{y}}$$`,
+    el => [kx(el) >= 1 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
 ];
 
 const out = document.getElementById('out');

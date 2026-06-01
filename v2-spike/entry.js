@@ -156,6 +156,12 @@ function normalizeMathDelims(src) {
       // is destroyed.
       .replace(/(?<!\\)\\\[/g, '$$$$').replace(/(?<!\\)\\\]/g, '$$$$')
       .replace(/(?<!\\)\\\(/g, '$').replace(/(?<!\\)\\\)/g, '$');
+    // KaTeX has no `\leftroot` / `\uproot` (amsmath root-index nudging) and errors
+    // on them. They are purely cosmetic, so strip them and their braced or
+    // unbraced numeric argument; `\sqrt[\leftroot-2\uproot2 n]{…}` then renders as
+    // a normal `\sqrt[n]{…}` instead of a katex-error.
+    line = line.replace(/\\(?:leftroot|uproot)\s*(?:\{[^{}]*\}|-?\d+)?/g, '');
+
     // Move display math onto its own block lines (flow/display mode) — needed so
     // KaTeX `\tag` works (it is display-only) and so display equations render as
     // centered blocks, in every context: whole-line, mid-sentence, or a list item.
