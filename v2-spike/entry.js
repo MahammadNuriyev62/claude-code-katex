@@ -85,6 +85,51 @@ function escapeCurrencyDollars(line) {
   return out;
 }
 
+// Moves display math ($$...$$) onto its own block lines so remark-math parses it
+// as *flow* (display) math. This matters for two reasons: KaTeX `\tag` works only
+// in display mode (inline $$...$$ throws a katex-error — issue #8), and display
+// math should render as a centered block. Returns the (possibly several) lines
+// the input line becomes. Handles a whole-line equation, an equation sharing its
+// line with prose, an equation as a list item, and multiple per line. Lines that
+// are a lone `$$` fence (opening/closing a multi-line block) are left untouched.
+function explodeDisplayMath(line) {
+  if (/^\s*\$\$\s*$/.test(line)) return [line];          // lone fence line
+  const span = /\$\$(.+?)\$\$/;                            // a complete same-line $$...$$
+
+  if (!span.test(line)) {
+    // No complete pair: a single `$$` that opens or closes a multi-line block,
+    // sharing its line with content -> move just that fence onto its own line.
+    let m = line.match(/^(\s*)\$\$(.+)$/);
+    if (m && m[2].trim() !== '' && m[2].indexOf('$$') === -1) return [m[1] + '$$', m[1] + m[2]];
+    m = line.match(/^(.+)\$\$\s*$/);
+    if (m && m[1].trim() !== '' && m[1].indexOf('$$') === -1) return [m[1], '$$'];
+    return [line];
+  }
+
+  // A list item whose content is exactly one equation -> keep it a list item,
+  // with the `$$` fences as the item's (indented) flow content.
+  const li = line.match(/^(\s*(?:[-*+]|\d+[.)])\s+)\$\$(.+?)\$\$\s*$/);
+  if (li && li[2].indexOf('$$') === -1) {
+    const indent = ' '.repeat(li[1].length);
+    return [li[1] + '$$', indent + li[2].trim(), indent + '$$'];
+  }
+
+  // General: split prose and each $$...$$ into separate blocks (blank-separated).
+  const out = [];
+  const re = /\$\$(.+?)\$\$/g;
+  let idx = 0, m;
+  while ((m = re.exec(line)) !== null) {
+    const pre = line.slice(idx, m.index).trim();
+    if (pre) out.push(pre, '');
+    out.push('$$', m[1].trim(), '$$', '');
+    idx = re.lastIndex;
+  }
+  const post = line.slice(idx).trim();
+  if (post) out.push(post);
+  while (out.length && out[out.length - 1] === '') out.pop();
+  return out;
+}
+
 // --- \[ \] and \( \) support, plus currency disambiguation ----------------
 //
 // remark-math only knows $ and $$. Claude also emits \[...\] (display) and
@@ -111,31 +156,10 @@ function normalizeMathDelims(src) {
       // is destroyed.
       .replace(/(?<!\\)\\\[/g, '$$$$').replace(/(?<!\\)\\\]/g, '$$$$')
       .replace(/(?<!\\)\\\(/g, '$').replace(/(?<!\\)\\\)/g, '$');
-    // remark-math's display-math *flow* construct only recognizes `$$` when it
-    // is alone on its line — and, crucially, KaTeX commands like `\tag` work
-    // ONLY in display mode. A self-contained single-line `$$ … $$` is otherwise
-    // parsed as *inline* math (displayMode:false), so `\tag` throws a
-    // katex-error (issue #8). So:
-    //  - a whole-line `$$ … $$` is exploded onto its own three lines, making it
-    //    proper flow (display) math — `\tag` works and it renders as a block;
-    //  - a fence that merely shares its line with content (`$$\begin{aligned}`
-    //    or `\end{aligned}$$`) has just that fence moved onto its own line.
-    // Mid-sentence `$$…$$` (text on both sides) is left inline, untouched.
-    let mFull = line.match(/^(\s*)\$\$(.+?)\$\$\s*$/);
-    if (mFull && mFull[2].trim() !== '' && mFull[2].indexOf('$$') === -1) {
-      line = mFull[1] + '$$\n' + mFull[1] + mFull[2].trim() + '\n' + mFull[1] + '$$';
-    } else {
-      let m = line.match(/^(\s*)\$\$(.+)$/);
-      if (m && m[2].trim() !== '' && m[2].indexOf('$$') === -1) {
-        line = m[1] + '$$\n' + m[1] + m[2];
-      } else {
-        m = line.match(/^(.+)\$\$\s*$/);
-        if (m && m[1].trim() !== '' && m[1].indexOf('$$') === -1) {
-          line = m[1] + '\n$$';
-        }
-      }
-    }
-    lines[i] = line;
+    // Move display math onto its own block lines (flow/display mode) — needed so
+    // KaTeX `\tag` works (it is display-only) and so display equations render as
+    // centered blocks, in every context: whole-line, mid-sentence, or a list item.
+    lines[i] = explodeDisplayMath(line).join('\n');
   }
   return lines.join('\n');
 }

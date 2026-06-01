@@ -247,6 +247,24 @@ $$`,
 
   ['PR#9 51 — digit-leading equation with spaces, standalone ($3a - 2b = 12$)', R`Then $3a - 2b = 12$ follows.`,
     el => [kx(el) === 1 && err(el) === 0, kx(el) + ' katex (want 1), ' + err(el) + ' err']],
+
+  // ===== Issue #8 in REALISTIC contexts (how Claude actually emits them) =====
+  ['CTX 52 — TWO tagged $$ on consecutive lines (no blank between)', R`$$A = \sum_{k=1}^n \lambda_k \cdot v_k \overline{v_k'} \tag{★}$$
+$$(\lambda I_n - A)^* = \sum_{k=1}^n \left(\prod_{j \neq k} (\lambda - \lambda_j)\right) \cdot v_k \overline{v_k'} \tag{3}$$`,
+    el => [el.querySelectorAll('.katex-display').length === 2 && err(el) === 0,
+           el.querySelectorAll('.katex-display').length + ' display (want 2), ' + err(el) + ' err']],
+
+  ['CTX 53 — three tagged $$ on consecutive lines', R`$$A = \lambda_k \tag{1}$$
+$$B = \mu_k \tag{2}$$
+$$C = \nu_k \tag{3}$$`,
+    el => [el.querySelectorAll('.katex-display').length === 3 && err(el) === 0,
+           el.querySelectorAll('.katex-display').length + ' display (want 3), ' + err(el) + ' err']],
+
+  ['CTX 54 — tagged $$ as a bullet list item', R`- $$E = mc^2 \tag{1}$$`,
+    el => [kx(el) >= 1 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
+
+  ['CTX 55 — tagged $$ with text prefix on the same line', R`The result is $$E = mc^2 \tag{1}$$ shown here.`,
+    el => [kx(el) >= 1 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
 ];
 
 const out = document.getElementById('out');

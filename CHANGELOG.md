@@ -1,8 +1,14 @@
 # Changelog
 
-## [2.0.3] - 2026-06-01
+## [2.0.4] - 2026-06-01
 
 ### Fixed
+- **Display math with `\tag{…}` renders in every context.** Whole-line `$$…$$`,
+  equations sharing a line with prose (`The result is $$…\tag{1}$$`), and
+  equations as list items (`- $$…\tag{1}$$`) are all now moved onto their own
+  block lines so remark-math parses them as *flow* (display) math — KaTeX `\tag`
+  is display-only, so anywhere it was left inline it threw a katex-error.
+  ([#8](https://github.com/MahammadNuriyev62/claude-code-katex/issues/8))
 - **Inline math whose content starts with a digit now renders** — `$10^{-4}$`,
   `$2x$`, `$3t^2-2t^3$`, `$2x + y - z = 8$`. The v1.5 currency rule escaped
   *every* `$` immediately before a digit, which killed a legitimate *opening*
@@ -20,12 +26,6 @@
   math — including spaced equations like `$2x + y - z = 8$` — rendering, while
   currency discussions stay literal. Non-digit-leading math (`$a + b = c$`) is
   untouched.
-- **Display math with `\tag{…}` now renders** instead of showing a KaTeX error.
-  A whole-line `$$…$$` was parsed as *inline* math, but KaTeX's `\tag` (and
-  `\tag*`) works only in display mode. Whole-line `$$…$$` and `\[…\]` are now
-  exploded onto their own lines so they parse as flow/display math — `\tag`
-  works and display equations render as proper centered blocks.
-  ([#8](https://github.com/MahammadNuriyev62/claude-code-katex/issues/8))
 
 ### Development
 - **Containerized test environment.** A single Docker image (`Dockerfile`,

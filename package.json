@@ -2,7 +2,7 @@
   "name": "claude-code-katex",
   "displayName": "Claude Code LaTeX",
   "description": "Adds LaTeX math rendering to Claude Code chat — inline $...$, display $$...$$, and \\(...\\) / \\[...\\]",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "publisher": "nuriyev",
   "license": "MIT",
   "icon": "icon.png",
