@@ -79,6 +79,7 @@ function setupFakeVendorDir() {
   fs.writeFileSync(path.join(vendorDir, 'katex.min.js'), '/* katex core mock */');
   fs.writeFileSync(path.join(vendorDir, 'remark-math-bundle.js'), '/* bundle mock */ window.__KATEX_V2_LOADED=true;');
   fs.writeFileSync(path.join(vendorDir, 'katex.min.css'), '/* katex css mock */');
+  fs.writeFileSync(path.join(vendorDir, 'copy-tex.min.js'), '/* copy-tex mock */');
   fs.writeFileSync(path.join(fontsDir, 'KaTeX_Main.woff2'), 'fake-font-data');
   fs.writeFileSync(path.join(fontsDir, 'KaTeX_Math.woff2'), 'fake-font-data-2');
   return vendorDir;
@@ -192,6 +193,26 @@ describe('applyPatch', () => {
     const js = readJs();
     expect(js).toContain('/* katex core mock */');
     expect(js).toContain('/* bundle mock */');
+  });
+
+  test('prepends the copy-tex contrib after the core, before the bundle', () => {
+    applyPatch(extDir, vendorDir);
+    const js = readJs();
+    expect(js).toContain('/* copy-tex mock */');
+    // copy-tex must attach its copy listener in the webview document before
+    // Claude Code's app (at the end of the bundle) mounts; keep it grouped with
+    // the core, ahead of the pipeline bundle.
+    expect(js.indexOf('/* katex core mock */')).toBeLessThan(js.indexOf('/* copy-tex mock */'));
+    expect(js.indexOf('/* copy-tex mock */')).toBeLessThan(js.indexOf('/* bundle mock */'));
+  });
+
+  test('still patches when the optional copy-tex contrib is absent (graceful)', () => {
+    fs.unlinkSync(path.join(vendorDir, 'copy-tex.min.js'));
+    expect(applyPatch(extDir, vendorDir)).toBe(true);
+    const js = readJs();
+    expect(js).toContain('/* katex core mock */');
+    expect(js).toContain('/* bundle mock */');
+    expect(js).not.toContain('/* copy-tex mock */');
   });
 
   test('injects the guarded math plugins into the react-markdown call', () => {

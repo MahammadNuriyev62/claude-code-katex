@@ -29,7 +29,7 @@ level2() {
   # Claude Code's actual react-markdown -> remark-math -> rehype-katex chain.
   # (The legacy test-ui/*.spec.js suite tests the removed v1 DOM post-processor
   # and is intentionally NOT run here — see docker/README.md.)
-  log "Torture harness (v2-spike/test.html, 26 cases)"
+  log "Torture harness (v2-spike/test.html)"
   python3 -m http.server "$HARNESS_PORT" --directory /app >/tmp/harness.log 2>&1 &
   local srv=$!
   trap 'kill "$srv" 2>/dev/null || true' RETURN
@@ -85,6 +85,11 @@ smoke() {
     log "✅ Patch applied — the extension patched Claude Code's webview on activation."
   else
     fail "Patch marker absent — the extension did not patch Claude Code's webview."
+  fi
+  if grep -q 'KaTeX copy-tex extension' "$webview"; then
+    log "✅ copy-tex contrib present in the patched webview bundle."
+  else
+    fail "copy-tex marker absent — vendor/copy-tex.min.js did not ship or was not prepended."
   fi
 }
 

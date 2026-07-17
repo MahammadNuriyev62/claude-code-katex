@@ -5,6 +5,7 @@
 <title>Claude Code LaTeX v2 — torture harness</title>
 <link rel="stylesheet" href="/vendor/katex.min.css">
 <script src="/vendor/katex.min.js"></script>
+<script src="/vendor/copy-tex.min.js"></script>
 <script src="/vendor/remark-math-bundle.js"></script>
 <style>
   body { font-family: sans-serif; background:#1e1e2e; color:#ddd; padding:20px; max-width:1100px; }
@@ -33,6 +34,22 @@ const R = String.raw;
 const err = el => el.querySelectorAll('.katex-error').length;
 const kx  = el => el.querySelectorAll('.katex').length;
 const mtr = el => el.querySelectorAll('mtr').length;
+
+// Selects `node` and dispatches a synthetic copy through the document, which
+// runs the real copy-tex handler. Returns what would land on the clipboard.
+// (Trusted-path Ctrl+C is exercised on top of this by docker/run-harness.js.)
+const syntheticCopy = node => {
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  sel.addRange(range);
+  const dt = new DataTransfer();
+  const evt = new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true });
+  document.dispatchEvent(evt);
+  sel.removeAllRanges();
+  return { text: dt.getData('text/plain'), prevented: evt.defaultPrevented };
+};
 
 // [name, markdown, predicate(renderEl) -> [ok, detail]]
 const cases = [
@@ -273,6 +290,41 @@ $$C = \nu_k \tag{3}$$`,
 
   ['CTX 57 — \\leftroot/\\uproot (braced) degrade to \\sqrt[n]', R`$$\sqrt[\leftroot{-2}\uproot{2}n]{\frac{x}{y}}$$`,
     el => [kx(el) >= 1 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
+
+  // ===== copy-tex — copying selected math must yield its LaTeX source =====
+  ['COPYTEX 58 — inline math carries its x-tex source annotation', R`Euler: $e^{i\pi}+1=0$!`,
+    el => { const a = el.querySelector('.katex annotation[encoding="application/x-tex"]');
+            return [!!a && a.textContent.includes('\\pi'),
+                    a ? 'annotation=' + JSON.stringify(a.textContent.trim()) : 'NO annotation']; }],
+
+  ['COPYTEX 59 — display math carries the source copy-tex copies', R`$$\int_0^1 x^2\,dx = \tfrac13$$`,
+    el => { const a = el.querySelector('.katex-display annotation[encoding="application/x-tex"]');
+            return [!!a && a.textContent.includes('\\int'),
+                    a ? 'annotation present' : 'NO annotation']; }],
+
+  ['COPYTEX 60 — copying prose + inline math yields $-wrapped LaTeX', R`Euler said $e^{i\pi}+1=0$ once.`,
+    el => { const c = syntheticCopy(el);
+            const want = R`$e^{i\pi}+1=0$`;
+            return [c.prevented && c.text.includes(want) && c.text.includes('Euler said') && c.text.includes('once.'),
+                    'prevented=' + c.prevented + ' text=' + JSON.stringify(c.text)]; }],
+
+  ['COPYTEX 61 — copying display math yields $$-wrapped LaTeX', R`$$\oint_C \mathbf{F}\cdot d\mathbf{r} = 0$$`,
+    el => { const c = syntheticCopy(el);
+            const t = c.text.trim();
+            return [c.prevented && t.startsWith('$$') && t.endsWith('$$') && t.includes(R`\oint_C`),
+                    'prevented=' + c.prevented + ' text=' + JSON.stringify(c.text)]; }],
+
+  ['COPYTEX 62 — partial selection inside a formula expands to the whole formula', R`$a_{n+1} = \frac{a_n}{2}$`,
+    el => { const leaf = el.querySelector('.katex-html span');
+            if (!leaf) return [false, 'no .katex-html leaf to select'];
+            const c = syntheticCopy(leaf);
+            return [c.prevented && c.text.includes(R`$a_{n+1} = \frac{a_n}{2}$`),
+                    'prevented=' + c.prevented + ' text=' + JSON.stringify(c.text)]; }],
+
+  ['COPYTEX 63 — selection without math copies exactly as before (not hijacked)', R`Plain prose with **bold** and _emphasis_, no math at all — even a \$5 price.`,
+    el => { const c = syntheticCopy(el);
+            return [!c.prevented && c.text === '',
+                    'prevented=' + c.prevented + ' text=' + JSON.stringify(c.text)]; }],
 ];
 
 const out = document.getElementById('out');

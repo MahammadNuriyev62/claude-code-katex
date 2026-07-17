@@ -86,7 +86,10 @@ consume it like normal usage); it never becomes a metered charge.
 4. Playwright (`docker/e2e.js`) opens code-server headless, opens a Claude Code
    tab, sends a prompt that asks Claude to echo a fixed block of LaTeX (so the
    test measures the **renderer**, not the model), waits for the reply to settle,
-   and asserts `.katex` elements rendered with **zero** `.katex-error`.
+   and asserts `.katex` elements rendered with **zero** `.katex-error`. It then
+   selects the first display formula, presses a real `Ctrl+C`, and asserts the
+   copy event's payload is the `$$`-wrapped LaTeX source (copy-tex working in
+   the live webview).
 
 ## Notes / gotchas
 

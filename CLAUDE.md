@@ -17,9 +17,12 @@ instead of being repaired in the DOM afterward.
   `rehypePlugins:[rehypeKatex]` and `remarkPlugins:[gfm, remarkBracketMath,
   remarkMath]`. The injected references are guarded on `window.__KATEX_V2_LOADED`
   so a bundle-load failure cannot break Claude Code's Markdown.
-- It prepends `vendor/katex.min.js` + `vendor/remark-math-bundle.js` to the
-  webview bundle (Claude Code mounts its React app at the end of the bundle, so
-  the globals must be defined first).
+- It prepends, in order, `vendor/katex.min.js`, the optional KaTeX contrib
+  `vendor/copy-tex.min.js` (copying a selection of rendered math yields its
+  LaTeX source), and `vendor/remark-math-bundle.js` to the webview bundle
+  (Claude Code mounts its React app at the end of the bundle, so the globals
+  must be defined first). A missing contrib file degrades gracefully — core
+  math still renders.
 - If the injection point is not found — a future Claude Code reshaped its
   bundle — `applyPatch` returns `false`, touches nothing, and the extension
   shows an "update / report an issue" notice. There is no fallback renderer.
@@ -122,8 +125,10 @@ code-server, asserting KaTeX renders in the live webview.
   on activation (greps the patch marker). Gates CI without any secret.
 - `docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN=... img 3` — adds the live render.
   `docker/e2e.js` opens Claude Code, sends a prompt that asks Claude to echo a
-  **fixed** block of LaTeX (so it tests the renderer, not the model), and asserts
-  `.katex` with zero `.katex-error`. Auth is a **subscription** token from
+  **fixed** block of LaTeX (so it tests the renderer, not the model), asserts
+  `.katex` with zero `.katex-error`, then selects a display formula, presses a
+  real `Ctrl+C`, and asserts the copy payload is the `$$`-wrapped LaTeX source
+  (copy-tex live). Auth is a **subscription** token from
   `claude setup-token` (not a metered `ANTHROPIC_API_KEY`) or a mounted
   `~/.claude` — see `docker/README.md`.
 

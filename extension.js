@@ -110,6 +110,13 @@ function applyPatch(extDir, vendorDir) {
   // Code mounts its React app at the end of the bundle, so window.__remarkMath
   // etc. must be defined before that runs.
   const katexCore = fs.readFileSync(path.join(vendorDir, 'katex.min.js'), 'utf8');
+  // Optional KaTeX contrib, prepended right after the core: copy-tex rewrites
+  // the clipboard on copy so selected math yields its LaTeX source ($...$ /
+  // $$...$$) instead of the rendered spans' garbled text. It is standalone DOM
+  // code (reads the x-tex <annotation> KaTeX emits); a missing file degrades
+  // gracefully — core math still renders, copying just stays unfixed.
+  const copyTexPath = path.join(vendorDir, 'copy-tex.min.js');
+  const copyTex = fs.existsSync(copyTexPath) ? fs.readFileSync(copyTexPath, 'utf8') : '';
   const v2Bundle = fs.readFileSync(path.join(vendorDir, 'remark-math-bundle.js'), 'utf8');
   const injectedBody = body.replace(
     V2_INJECT_RE,
@@ -119,6 +126,7 @@ function applyPatch(extDir, vendorDir) {
   fs.writeFileSync(jsPath,
     `${PATCH_MARKER}\n${PATCH_VERSION_PREFIX}${EXTENSION_VERSION} */\n` +
     `/* KaTeX Core - MIT License - https://katex.org */\n${katexCore}\n` +
+    (copyTex ? `/* KaTeX copy-tex extension (copy selection as LaTeX) - MIT License */\n${copyTex}\n` : '') +
     `/* remark-math + rehype-katex pipeline */\n${v2Bundle}\n` +
     `/* === End KaTeX Patch — Claude Code bundle (math plugins injected) follows === */\n` +
     injectedBody

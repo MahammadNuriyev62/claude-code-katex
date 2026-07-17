@@ -140,7 +140,61 @@ function readRoot(frame) {
   if (snap.errors > 0) await die(`${snap.errors} .katex-error element(s) — KaTeX failed to parse some math.`);
   if (snap.katex === 0) await die('No .katex elements rendered — math left unrendered (patch not applied or no reply).');
 
-  console.log(`\n[L3] ✅ ${snap.katex} .katex (${snap.display} display), 0 errors — PASS`);
+  console.log(`\n[L3] ✅ ${snap.katex} .katex (${snap.display} display), 0 errors — render PASS`);
+
+  // copy-tex in the LIVE webview: select the first rendered display formula,
+  // press a real Ctrl+C, and assert the copy event's payload is the $$-wrapped
+  // LaTeX source (not the rendered spans' text). The capture listener runs
+  // after copy-tex's (which the patch prepended to the webview bundle at load).
+  // The whole user gesture, end to end: a real mouse drag from the inline
+  // formula down past the first display formula, then a real Ctrl+C. If any
+  // user-select CSS blocked selection, the drag would select nothing and this
+  // fails — no CSS heuristics needed. The capture listener runs after
+  // copy-tex's (which the patch prepended to the webview bundle at load).
+  console.log('[L3] copy-tex: drag-selecting across inline + display math, pressing Ctrl+C');
+  const inlineBox = await cc.locator('.katex').first().boundingBox();
+  const dispBox = await cc.locator('.katex-display').first().boundingBox();
+  if (!inlineBox || !dispBox) await die('could not measure rendered math for the drag.');
+  await cc.evaluate(() => {
+    window.getSelection().removeAllRanges();
+    document.addEventListener('copy', (e) => {
+      window.__E2E_COPY = { text: e.clipboardData.getData('text/plain'), trusted: e.isTrusted };
+    }, { once: true });
+  });
+  await page.mouse.move(inlineBox.x + 2, inlineBox.y + inlineBox.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(dispBox.x + dispBox.width / 2, dispBox.y + dispBox.height + 8, { steps: 12 });
+  await page.mouse.up();
+  const selInfo = await cc.evaluate(() => {
+    const t = String(window.getSelection() || '');
+    const us = (q) => { const el = document.querySelector(q); return el ? getComputedStyle(el).userSelect : 'n/a'; };
+    return { len: t.length, katexUserSelect: us('.katex-display') };
+  });
+  console.log('[L3] drag selection:', JSON.stringify(selInfo));
+  if (selInfo.len === 0) {
+    await die(`mouse drag selected nothing (user-select on .katex-display: ${selInfo.katexUserSelect}) — users cannot select math.`);
+  }
+  await page.keyboard.press('Control+C');
+  let copy = null;
+  try {
+    await cc.waitForFunction('!!window.__E2E_COPY', { timeout: 5000 });
+    copy = await cc.evaluate(() => window.__E2E_COPY);
+  } catch (_) {
+    await die('no copy event reached the webview within 5s of Ctrl+C — copy-tex could not be exercised.');
+  }
+  console.log('[L3] copy payload:', JSON.stringify(copy));
+  const copied = copy.text || '';
+  if (!copy.trusted) await die('copy event fired but was not trusted — Ctrl+C did not reach the webview.');
+  // Inline math caught by the drag must come out $-wrapped; the display
+  // formula (its .katex-display wrapper is inside the dragged range) $$-wrapped.
+  if (!copied.includes('$E = mc^2$')) {
+    await die(`inline math is not $-wrapped LaTeX in the copy: ${JSON.stringify(copied)}`);
+  }
+  if (!/\$\$[^$]*\\sum_\{k=1\}\^n[^$]*\$\$/.test(copied)) {
+    await die(`display math is not $$-wrapped LaTeX in the copy: ${JSON.stringify(copied)}`);
+  }
+
+  console.log(`\n[L3] ✅ copy-tex PASS — a real drag + Ctrl+C copied ${JSON.stringify(copied.slice(0, 80))}…`);
   await browser.close();
   process.exit(0);
 })().catch((e) => { console.error('[L3]', e); process.exit(1); });

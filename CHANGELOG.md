@@ -1,5 +1,18 @@
 # Changelog
 
+## [2.0.8] - 2026-07-17
+
+### Fixed
+- **Copying rendered math now yields its LaTeX source.** Selecting an equation
+  and copying used to put the rendered spans' garbled glyph text on the
+  clipboard. KaTeX's official `copy-tex` extension now rewrites the copy: math
+  in the selection becomes its original LaTeX — inline wrapped in `$…$`, display
+  in `$$…$$` — ready to paste into a `.tex` file, Overleaf, or another chat. A
+  partial selection inside a formula expands to the whole formula (matching
+  KaTeX's behavior), and selections containing no math copy exactly as before.
+  The contrib loads right after the KaTeX core; if the file is missing the
+  extension degrades gracefully (math still renders, copying is just unfixed).
+
 ## [2.0.7] - 2026-06-23
 
 ### Fixed
