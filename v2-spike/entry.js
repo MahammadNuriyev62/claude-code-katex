@@ -139,6 +139,7 @@ function explodeDisplayMath(line) {
 function normalizeMathDelims(src) {
   if (typeof src !== 'string') return src;
   if (src.indexOf('\\') === -1 && src.indexOf('$') === -1) return src;
+  const lookupLabel = buildLabelMap(src);
   const lines = src.split('\n');
   let inFence = false, fenceChar = '';
   for (let i = 0; i < lines.length; i++) {
@@ -162,12 +163,59 @@ function normalizeMathDelims(src) {
     // a normal `\sqrt[n]{…}` instead of a katex-error.
     line = line.replace(/\\(?:leftroot|uproot)\s*(?:\{[^{}]*\}|-?\d+)?/g, '');
 
+    // \eqref{name} / \ref{name} -> the labeled equation's \tag number, in
+    // prose and math alike. Unresolved names fall through to the katex macros.
+    line = resolveRefs(line, lookupLabel);
+
     // Move display math onto its own block lines (flow/display mode) — needed so
     // KaTeX `\tag` works (it is display-only) and so display equations render as
     // centered blocks, in every context: whole-line, mid-sentence, or a list item.
     lines[i] = explodeDisplayMath(line).join('\n');
   }
   return lines.join('\n');
+}
+
+// --- \label / \ref / \eqref resolution (issue #14) -------------------------
+//
+// LaTeX resolves \eqref{name} to the labeled equation's NUMBER. KaTeX has no
+// document counter, but chat math that labels equations tags them too
+// ($$... \tag{4} \label{eq:x}$$), so the mapping is right there in the source.
+// Scan every display block for a \tag + \label pair and build name -> number.
+// The map is kept on a window-level registry so a reference in a later chat
+// message still resolves to an equation labeled in an earlier one (all
+// messages render through this same pipeline); the current document's own
+// labels win on collision.
+//
+// Resolved references are rewritten as plain text — "\eqref{eq:x}" -> "(4)",
+// "\ref{eq:x}" -> "4" — which is correct BOTH in prose and inside math, so one
+// string-level pass handles the skill's "From \eqref{eq:x} we see..." prose as
+// well as $\eqref{eq:x}$. Unresolved references (no \tag anywhere) are left
+// for the katex macros below, which render them as the readable "(name)".
+function buildLabelMap(src) {
+  const registry = (window.__KATEX_LABELS = window.__KATEX_LABELS || new Map());
+  const local = new Map();
+  const block = /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]/g;
+  let m;
+  while ((m = block.exec(src)) !== null) {
+    const body = m[1] !== undefined ? m[1] : m[2];
+    const tag = body.match(/\\tag\*?\{([^{}]*)\}/);
+    if (!tag) continue;
+    const labelRe = /\\label\{([^{}]*)\}/g;
+    let lm;
+    while ((lm = labelRe.exec(body)) !== null) {
+      local.set(lm[1], tag[1]);
+      registry.set(lm[1], tag[1]);
+    }
+  }
+  return (name) => (local.has(name) ? local.get(name) : registry.get(name));
+}
+
+function resolveRefs(line, lookup) {
+  return line.replace(/\\(eqref|ref)\{([^{}]*)\}/g, (whole, cmd, name) => {
+    const n = lookup(name);
+    if (n === undefined) return whole;          // unresolved -> katex macro fallback
+    return cmd === 'eqref' ? '(' + n + ')' : n;
+  });
 }
 
 // A remark plugin that wraps the parser so normalizeMathDelims runs on the
@@ -180,8 +228,34 @@ function remarkBracketMath() {
   }
 }
 
+// KaTeX implements none of LaTeX's cross-referencing commands — \label, \ref,
+// \eqref — and renders them as red errors spliced into the formula (issue #14;
+// a popular math-reasoning skill appends \label{eq:...} to every equation).
+// Map them to what KaTeX *can* do, via macros passed through rehype-katex:
+//   \label{x} -> \htmlId{x}{}   invisible anchor, like LaTeX (consumes the arg)
+//   \eqref{x} -> \text{(x)}     readable textual reference
+//   \ref{x}   -> \text{x}
+// \htmlId needs `trust`, granted for that single command only, and its
+// htmlExtension strict-mode warning is silenced (it would log per formula).
+// The macros object is rebuilt per plugin instantiation: KaTeX mutates it when
+// input uses \gdef, so a shared object would leak definitions across renders.
+const realRehypeKatex = rehypeKatex && rehypeKatex.default ? rehypeKatex.default : rehypeKatex;
+function rehypeKatexWithCrossrefs(options) {
+  return realRehypeKatex.call(this, {
+    ...options,
+    macros: {
+      '\\label': '\\htmlId{#1}{}',
+      '\\eqref': '\\text{(#1)}',
+      '\\ref': '\\text{#1}',
+      ...(options && options.macros),
+    },
+    trust: (context) => context.command === '\\htmlId',
+    strict: (errorCode) => (errorCode === 'htmlExtension' ? 'ignore' : 'warn'),
+  });
+}
+
 window.__remarkMath = remarkMath && remarkMath.default ? remarkMath.default : remarkMath;
-window.__rehypeKatex = rehypeKatex && rehypeKatex.default ? rehypeKatex.default : rehypeKatex;
+window.__rehypeKatex = rehypeKatexWithCrossrefs;
 window.__remarkBracketMath = remarkBracketMath;
 window.__KATEX_V2_LOADED = true;
 console.log('[Claude Code LaTeX v2] math pipeline loaded:',

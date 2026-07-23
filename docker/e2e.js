@@ -21,16 +21,19 @@ const CODE_URL = process.env.CODE_URL || 'http://127.0.0.1:8080/?folder=/workspa
 const OPEN_CMD = process.env.CLAUDE_OPEN_CMD || 'Claude Code: Focus on Claude Code View';
 const OUT_DIR = '/app/test-results';
 
-// Covers general rendering AND the two regressions we care about: issue #8
-// (display math with \tag, which errors unless rendered in display mode) and
-// PR #9 (digit-leading inline math like $10^{-4}$ vs currency $5). Override with
+// Covers general rendering AND the regressions we care about: issue #8
+// (display math with \tag, which errors unless rendered in display mode),
+// PR #9 (digit-leading inline math like $10^{-4}$ vs currency $5), and
+// issue #14 (\label{...} in display math, which KaTeX would render as a red
+// error — the zero-katex-error gate below covers it). Override with
 // E2E_PROMPT to probe something specific.
 const PROMPT = process.env.E2E_PROMPT ||
   ('Reply with EXACTLY the following lines and nothing else. Do not use code blocks. ' +
    'Do not edit any files, just reply in chat. Keep each display equation on its own line:\n\n' +
    'Inline: $E = mc^2$, digit-leading $10^{-4}$ and $3t^2 - 2t^3$, and $5 stays money.\n\n' +
-   '$$A = \\sum_{k=1}^n \\lambda_k \\cdot v_k \\overline{v_k\'} \\tag{★}$$\n\n' +
-   '$$\\begin{pmatrix} 1 & 0 \\\\ 0 & 1 \\end{pmatrix}$$');
+   '$$A = \\sum_{k=1}^n \\lambda_k \\cdot v_k \\overline{v_k\'} \\tag{4} \\label{eq:spectral}$$\n\n' +
+   '$$\\begin{pmatrix} 1 & 0 \\\\ 0 & 1 \\end{pmatrix}$$\n\n' +
+   'By $\\eqref{eq:spectral}$ and \\eqref{eq:spectral}, done.');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -141,6 +144,21 @@ function readRoot(frame) {
   if (snap.katex === 0) await die('No .katex elements rendered — math left unrendered (patch not applied or no reply).');
 
   console.log(`\n[L3] ✅ ${snap.katex} .katex (${snap.display} display), 0 errors — render PASS`);
+
+  // Issue #14 live: \label must produce its anchor, and BOTH \eqref forms —
+  // inside math and bare in prose — must resolve to the \tag number "(4)".
+  // (innerText can't be matched as one sentence: KaTeX's hidden MathML
+  // annotation duplicates each formula's text right next to its rendering.)
+  const xref = await cc.evaluate(() => ({
+    anchor: !!document.getElementById('eq:spectral'),
+    prose: (document.getElementById('root').innerText || '').includes('and (4), done.'),
+    mathRef: [...document.querySelectorAll('#root .katex .katex-html')]
+      .some((e) => e.textContent.trim() === '(4)'),
+  }));
+  if (!xref.anchor) await die('\\label{eq:spectral} did not produce its anchor (id missing).');
+  if (!xref.prose) await die('bare prose \\eqref{eq:spectral} did not resolve to "(4)".');
+  if (!xref.mathRef) await die('$\\eqref{eq:spectral}$ did not render as the math formula "(4)".');
+  console.log('[L3] ✅ \\label anchor present, \\eqref resolved to "(4)" in prose and math — xref PASS');
 
   // copy-tex in the LIVE webview: select the first rendered display formula,
   // press a real Ctrl+C, and assert the copy event's payload is the $$-wrapped

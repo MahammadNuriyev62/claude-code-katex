@@ -44,6 +44,12 @@ Markdown parser to normalize the raw source before micromark runs:
   flow construct only recognizes `$$` alone on a line.
 - fenced code blocks are skipped.
 
+`entry.js` also wraps `rehype-katex` (`rehypeKatexWithCrossrefs`) to pass KaTeX
+macros mapping LaTeX cross-referencing to renderable output — `\label{x}` →
+invisible `\htmlId{x}{}` anchor (trust granted for that command only),
+`\eqref{x}` → `\text{(x)}`, `\ref{x}` → `\text{x}` — since KaTeX errors on all
+three (issue #14).
+
 After editing `entry.js`, rebuild the shipped bundle:
 
 ```sh

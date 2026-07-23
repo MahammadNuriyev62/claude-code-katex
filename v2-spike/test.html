@@ -325,6 +325,58 @@ $$C = \nu_k \tag{3}$$`,
     el => { const c = syntheticCopy(el);
             return [!c.prevented && c.text === '',
                     'prevented=' + c.prevented + ' text=' + JSON.stringify(c.text)]; }],
+
+  // ===== Issue #14 — \label / \ref / \eqref (LaTeX cross-referencing KaTeX lacks) =====
+  ['XREF 64 — \\label inside display math renders invisibly (issue #14 screenshot)', R`$$\widehat{x}(u,v) = 0, \quad (u,v) \neq (0,0). \label{eq:constant-spectrum} \tag{4}$$`,
+    el => { const anchor = el.querySelector('#eq\\:constant-spectrum');
+            const visible = (el.querySelector('.katex-html') || el).textContent;
+            return [kx(el) >= 1 && err(el) === 0 && !!anchor && !visible.includes('label') && !visible.includes('constant-spectrum'),
+                    kx(el) + ' katex, ' + err(el) + ' err, anchor=' + !!anchor + ', visible=' + JSON.stringify(visible.slice(0, 60))]; }],
+
+  ['XREF 65 — \\label with no space before it ($$y=Hx.\\label{...}$$)', R`$$y = Hx.\label{eq:conv-theorem} \tag{5}$$`,
+    el => [kx(el) >= 1 && err(el) === 0 && !!el.querySelector('#eq\\:conv-theorem'),
+           kx(el) + ' katex, ' + err(el) + ' err, anchor=' + !!el.querySelector('#eq\\:conv-theorem')]],
+
+  ['XREF 66 — \\eqref renders as a readable textual reference', R`From $\eqref{eq:zero-dc}$ it follows.`,
+    el => { const t = (el.querySelector('.katex-html') || el).textContent;
+            return [kx(el) === 1 && err(el) === 0 && t.includes('(eq:zero-dc)'),
+                    kx(el) + ' katex, ' + err(el) + ' err, text=' + JSON.stringify(t)]; }],
+
+  ['XREF 67 — \\ref renders as the label name', R`See $\ref{eq:dc-output}$ above.`,
+    el => { const t = (el.querySelector('.katex-html') || el).textContent;
+            return [kx(el) === 1 && err(el) === 0 && t.includes('eq:dc-output'),
+                    kx(el) + ' katex, ' + err(el) + ' err, text=' + JSON.stringify(t)]; }],
+
+  ['XREF 68 — copy of a labeled formula still yields the verbatim source incl. \\label', R`$$\widehat{h}(0,0) = 0. \label{eq:zero-dc}$$`,
+    el => { const c = syntheticCopy(el);
+            return [c.prevented && c.text.includes(R`\label{eq:zero-dc}`) && c.text.includes(R`\widehat{h}`),
+                    'prevented=' + c.prevented + ' text=' + JSON.stringify(c.text)]; }],
+
+  ['XREF 69 — the issue-#14 use case: \\eqref resolves to the \\tag number, in prose AND math', R`$$\widehat{y}(0,0) = \widehat{h}(0,0)\widehat{x}(0,0). \tag{6} \label{eq:dc-out}$$
+
+$$\widehat{h}(0,0) = 0. \tag{7} \label{eq:zdc}$$
+
+Combining \eqref{eq:dc-out} with $\eqref{eq:zdc}$ gives the result.`,
+    el => { const t = el.textContent;
+            return [el.querySelectorAll('.katex-display').length === 2 && err(el) === 0 &&
+                    t.includes('Combining (6) with') && t.includes('(7)'),
+                    err(el) + ' err, text=' + JSON.stringify((t.match(/Combining[^.]*\./) || ['?'])[0])]; }],
+
+  ['XREF 70 — \\ref resolves to the bare \\tag number', R`$$z = 1 \tag{12} \label{eq:twelve}$$
+
+As equation \ref{eq:twelve} shows.`,
+    el => [err(el) === 0 && el.textContent.includes('As equation 12 shows'),
+           err(el) + ' err, text=' + JSON.stringify((el.textContent.match(/As equation[^.]*\./) || ['?'])[0])]],
+
+  ['XREF 71 — a reference in a LATER render resolves via the window registry (cross-message)', R`Recall \eqref{eq:dc-out} from before.`,
+    el => [el.textContent.includes('Recall (6) from before'),
+           'text=' + JSON.stringify(el.textContent.trim())]],
+
+  ['XREF 72 — a forward reference resolves (map is built from the whole document)', R`We will show \eqref{eq:fwd} below.
+
+$$a^2 + b^2 = c^2 \tag{9} \label{eq:fwd}$$`,
+    el => [err(el) === 0 && el.textContent.includes('We will show (9) below'),
+           err(el) + ' err, text=' + JSON.stringify((el.textContent.match(/We will[^.]*\./) || ['?'])[0])]],
 ];
 
 const out = document.getElementById('out');

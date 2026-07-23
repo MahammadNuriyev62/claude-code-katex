@@ -1,5 +1,17 @@
 # Changelog
 
+## [2.0.9] - 2026-07-23
+
+### Fixed
+- **`\label`, `\ref`, and `\eqref` no longer break formulas**
+  ([#14](https://github.com/MahammadNuriyev62/claude-code-katex/issues/14)).
+  KaTeX implements none of LaTeX's cross-referencing commands and rendered them
+  as red `\label` errors spliced into the equation (common with prompts/skills
+  that append `\label{eq:…}` to every formula). Now `\label{x}` renders
+  invisibly as an anchor (`id="x"`, exactly like LaTeX), `\eqref{x}` renders as
+  the readable reference `(x)`, and `\ref{x}` as `x`. Copying a labeled formula
+  still yields its verbatim source including the `\label`.
+
 ## [2.0.8] - 2026-07-17
 
 ### Fixed
