@@ -71,6 +71,22 @@ const err = el => el.querySelectorAll('.katex-error, [mathcolor="#cc0000"]').len
 const kx  = el => el.querySelectorAll('.katex').length;
 const txt = el => (el.querySelector('.katex-html') || el).textContent;
 
+// Selects `node` and dispatches a synthetic copy, running the real copy-tex
+// handler. Returns what would land on the clipboard. (run-harness.js adds a
+// trusted-path Ctrl+C check on top of this.)
+const syntheticCopy = node => {
+  const sel = window.getSelection();
+  sel.removeAllRanges();
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  sel.addRange(range);
+  const dt = new DataTransfer();
+  const evt = new ClipboardEvent('copy', { clipboardData: dt, bubbles: true, cancelable: true });
+  document.dispatchEvent(evt);
+  sel.removeAllRanges();
+  return { text: dt.getData('text/plain'), prevented: evt.defaultPrevented };
+};
+
 // [name, markdown, predicate(renderEl) -> [ok, detail]]
 const cases = [
   ['MACRO 1 — a no-argument macro from the file renders', R`$\RR$ is the reals.`,
@@ -135,6 +151,27 @@ From \eqref{eq:emc} we conclude.`,
 
   ['MACRO 13 — an undefined macro still errors normally (no silent swallowing)', R`$\neverDefinedAnywhere$`,
     el => [err(el) >= 1, err(el) + ' err (expected >= 1)']],
+
+  // Copying macro-using math must yield the macro CALL, not its expansion:
+  // the source is what pastes back into the .tex file where the macros live.
+  ['COPYMACRO 1 — copying display math yields the verbatim macro call, not the expansion', R`$$\vv{x} \in \RR^n$$`,
+    el => { const c = syntheticCopy(el);
+            const t = (c.text || '').trim();
+            return [c.prevented && t.startsWith('$$') && t.endsWith('$$') &&
+                    t.includes(R`\vv{x}`) && t.includes(R`\RR`) && !t.includes('mathbf') && !t.includes('mathbb'),
+                    'prevented=' + c.prevented + ' text=' + JSON.stringify(c.text)]; }],
+
+  ['COPYMACRO 2 — copying inline macro math yields $-wrapped source', R`The set $\RR$ here.`,
+    el => { const c = syntheticCopy(el.querySelector('.katex'));
+            const t = (c.text || '').trim();
+            return [c.prevented && t.includes(R`\RR`) && !t.includes('mathbb'),
+                    'prevented=' + c.prevented + ' text=' + JSON.stringify(c.text)]; }],
+
+  ['COPYMACRO 3 — copying a polyfilled operator yields \\myspan, not \\operatorname', R`$$\myspan(v_1, v_2) = \RR^2$$`,
+    el => { const c = syntheticCopy(el);
+            const t = (c.text || '').trim();
+            return [c.prevented && t.includes(R`\myspan`) && !t.includes('operatorname'),
+                    'prevented=' + c.prevented + ' text=' + JSON.stringify(c.text)]; }],
 ];
 
 const out = document.getElementById('out');

@@ -30,16 +30,28 @@ const urls = (() => {
   return [`${base}/v2-spike/test.html`, `${base}/v2-spike/test-macros.html`];
 })();
 
-// Selects the rendered \oint_C formula, presses a real Ctrl+C, and reports what
-// the copy-tex handler put on the clipboard. Returns null when this page does
-// not render that case.
+// Formulas the trusted-copy check looks for, in order. The first one present on
+// the page is selected, copied with a real Ctrl+C, and the clipboard payload
+// asserted to be its $$-wrapped LaTeX source. Both needles must appear only in
+// DISPLAY math — inline math correctly copies as `$…$`, which would fail the
+// `$$` assertion. `\RR^n` covers the macro page: copying macro-using math must
+// yield the macro CALL, not its expansion.
+const COPY_TARGETS = ['\\oint_C', '\\RR^n'];
+
+// Selects one of those formulas, presses a real Ctrl+C, and reports what the
+// copy-tex handler put on the clipboard. Returns null when this page renders
+// none of them.
 async function trustedCopyCheck(page) {
-  const setup = await page.evaluate(() => {
+  const setup = await page.evaluate((needles) => {
+    let found = null;
     const target = [...document.querySelectorAll('.case .render')].find((r) => {
       const a = r.querySelector('annotation[encoding="application/x-tex"]');
-      return a && a.textContent.includes('\\oint_C');
+      if (!a) return false;
+      found = needles.find((n) => a.textContent.includes(n)) || null;
+      return found !== null;
     });
     if (!target) return 'absent';
+    window.__COPY_NEEDLE = found;
     const sel = window.getSelection();
     sel.removeAllRanges();
     const range = document.createRange();
@@ -49,17 +61,18 @@ async function trustedCopyCheck(page) {
       window.__COPY_TRUSTED = { text: e.clipboardData.getData('text/plain'), trusted: e.isTrusted };
     }, { once: true });
     return null;
-  });
+  }, COPY_TARGETS);
   if (setup === 'absent') return null;
 
+  const needle = await page.evaluate(() => window.__COPY_NEEDLE);
   await page.keyboard.press(process.platform === 'darwin' ? 'Meta+C' : 'Control+C');
   try {
     await page.waitForFunction('!!window.__COPY_TRUSTED', { timeout: 5000 });
     const c = await page.evaluate(() => window.__COPY_TRUSTED);
     const t = (c.text || '').trim();
     return {
-      name: 'TRUSTED — real Ctrl+C over selected display math copies $$-wrapped LaTeX',
-      ok: c.trusted && t.startsWith('$$') && t.endsWith('$$') && t.includes('\\oint_C'),
+      name: `TRUSTED — real Ctrl+C over selected display math copies $$-wrapped LaTeX (${needle})`,
+      ok: c.trusted && t.startsWith('$$') && t.endsWith('$$') && t.includes(needle),
       detail: 'trusted=' + c.trusted + ' text=' + JSON.stringify(c.text),
     };
   } catch {
