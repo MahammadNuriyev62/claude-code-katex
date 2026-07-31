@@ -173,7 +173,14 @@ code-server, asserting KaTeX renders in the live webview.
 
 - `docker run --rm img smoke` — token-free. Installs the extension-under-test,
   launches code-server, and confirms the extension patched Claude Code's webview
-  on activation (greps the patch marker). Gates CI without any secret.
+  on activation (greps the patch marker, and that a configured macro payload
+  reached it). Gates CI without any secret.
+- `docker run --rm img macros` — token-free too, and stronger: attaches to the
+  real Claude Code webview, reads `__KATEX_MACRO_REPORT` from the page, and
+  renders with the resolved macros through the webview's own KaTeX. The webview
+  bundle loads whether or not anyone is signed in, so no auth is needed. Kept
+  out of `smoke` because it depends on the view-focus command and `smoke` must
+  stay CI-robust.
 - `docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN=... img 3` — adds the live render.
   `docker/e2e.js` opens Claude Code, sends a prompt that asks Claude to echo a
   **fixed** block of LaTeX (so it tests the renderer, not the model), asserts
