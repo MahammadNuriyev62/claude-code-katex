@@ -49,6 +49,17 @@ describe('ingestMacros — definitions that KaTeX supports', () => {
     expect(() => render('\\RR \\CC \\vv{x}', r.macros)).not.toThrow();
   });
 
+  test('handles a file with Windows line endings', () => {
+    const r = ingestMacros(katex, [
+      '% shortcuts',
+      '\\newcommand{\\RR}{\\mathbb{R}}',
+      '\\newcommand{\\vv}[1]{\\mathbf{#1}}',
+    ].join('\r\n'), {});
+    expect(r.loaded).toBe(2);
+    expect(r.skipped).toEqual([]);
+    expect(render('\\RR \\vv{x}', r.macros)).toContain('mathbf');
+  });
+
   test('joins a definition that spans several lines', () => {
     const r = ingestMacros(katex, [
       '\\newcommand{\\longone}[2]{',
