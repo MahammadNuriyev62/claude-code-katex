@@ -258,12 +258,15 @@ const USER_MACROS = (function loadUserMacros() {
     if (!preamble && !inline) return {};
 
     const report = ingestMacros(window.katex, preamble, inline || {});
-    // Exposed for the status popup, the L2 harness, and anyone debugging why
-    // one of their macros did not take.
+    // Exposed for the L2 harness, the auth-free webview probe, and anyone
+    // debugging why one of their macros did not take: in devtools,
+    // `__KATEX_MACRO_REPORT.macros` is exactly what KaTeX will resolve. It is
+    // a copy, so poking at it cannot change what renders.
     window.__KATEX_MACRO_REPORT = {
       loaded: report.loaded,
       skipped: report.skipped,
       truncated: report.truncated,
+      macros: { ...report.macros },
     };
     console.log('[Claude Code LaTeX] user macros: ' + report.loaded + ' loaded, ' +
       report.skipped.length + ' skipped' + (report.truncated ? ' (truncated)' : ''),

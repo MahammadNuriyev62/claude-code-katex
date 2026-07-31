@@ -72,19 +72,37 @@ cc_webview() {
 # Token-free: proves the real extension patches the real Claude Code in real
 # code-server. No Claude auth or network egress to Anthropic required, so it can
 # gate CI. The full Level 3 adds the live-render assertion on top.
-smoke() {
-  log "L3 smoke — patch applies in real code-server (no auth needed)"
-
-  # Configure a user macro before the extension activates, so this also proves
-  # the macro payload travels settings -> extension -> patched webview bundle.
-  # Merged into the baked settings so workspace trust stays disabled.
+# Writes a macro file and points the extension at it, before code-server starts
+# — so the extension reads it on activation exactly as a user's would be read.
+# Deliberately a slice of a real preamble: a \usepackage line that is not a
+# definition, and a \newenvironment that KaTeX cannot do, both of which must be
+# skipped without costing the macros around them.
+configure_macros() {
+  cat > /tmp/e2e-macros.tex <<'TEX'
+% e2e macros
+\usepackage{amsmath}
+\newcommand{\RR}{\mathbb{R}}
+\newcommand{\vv}[1]{\mathbf{#1}}
+\DeclareMathOperator{\myspan}{span}
+\newenvironment{thm}{}{}
+TEX
   local settings="${HOME}/.local/share/code-server/User/settings.json"
   node -e '
     const fs = require("fs"), p = process.argv[1];
     const s = JSON.parse(fs.readFileSync(p, "utf8"));
+    s["claudeCodeKatex.macroFiles"] = ["/tmp/e2e-macros.tex"];
     s["claudeCodeKatex.macros"] = { "\\smoketest": "\\mathbb{S}" };
     fs.writeFileSync(p, JSON.stringify(s, null, 2));
   ' "$settings"
+  log "Configured macros: /tmp/e2e-macros.tex + one inline macro"
+}
+
+smoke() {
+  log "L3 smoke — patch applies in real code-server (no auth needed)"
+
+  # Also proves the macro payload travels settings -> extension -> patched
+  # webview bundle. Merged into the baked settings so trust stays disabled.
+  configure_macros
 
   start_code_server
   trap 'kill "$CS_PID" 2>/dev/null || true' RETURN
@@ -113,6 +131,20 @@ smoke() {
   fi
 }
 
+# Auth-free, but stronger than smoke: attaches to the real Claude Code webview
+# and asks the page whether ingestion ran and whether the macros render. Needs
+# no Claude session — the webview bundle loads either way. Version-sensitive
+# like level3, since the webview frame only attaches once the view is focused,
+# which is why it is its own level and not part of the CI-gating smoke.
+macros_in_webview() {
+  log "Macro probe — user macros resolve inside the real Claude Code webview (no auth needed)"
+  configure_macros
+  start_code_server
+  trap 'kill "$CS_PID" 2>/dev/null || true' RETURN
+
+  CODE_URL="http://127.0.0.1:${CODE_PORT}/?folder=/workspace" node docker/webview-macros.js
+}
+
 level3() {
   log "Level 3 — real end-to-end (code-server + real Claude Code)"
 
@@ -125,6 +157,7 @@ level3() {
                                       login lives in Keychain, so prefer the token)"
   fi
 
+  configure_macros
   start_code_server
   trap 'kill "$CS_PID" 2>/dev/null || true' RETURN
 
@@ -136,10 +169,11 @@ case "${1:-ci}" in
   2|l2|level2)   level2 ;;
   3|l3|level3)   level3 ;;
   smoke)         smoke ;;
+  macros)        macros_in_webview ;;
   ci)            level1; level2 ;;
-  all)           level1; level2; level3 ;;
+  all)           level1; level2; macros_in_webview; level3 ;;
   shell|bash)    exec bash ;;
-  *)             fail "Unknown command: ${1}. Use one of: 1 2 3 smoke ci all shell" ;;
+  *)             fail "Unknown command: ${1}. Use one of: 1 2 3 smoke macros ci all shell" ;;
 esac
 
 log "Done."

@@ -27,12 +27,18 @@ const OUT_DIR = '/app/test-results';
 // issue #14 (\label{...} in display math, which KaTeX would render as a red
 // error — the zero-katex-error gate below covers it). Override with
 // E2E_PROMPT to probe something specific.
+// The macro line uses \vv, \RR and \myspan, which exist ONLY in the macro file
+// entrypoint.sh writes before launch (issue #15). If macros did not reach the
+// webview, KaTeX renders them as red text — which is why redErrors below is
+// gated, not just .katex-error: an undefined macro produces no .katex-error at
+// all, so the original gate would have passed with every macro broken.
 const PROMPT = process.env.E2E_PROMPT ||
   ('Reply with EXACTLY the following lines and nothing else. Do not use code blocks. ' +
    'Do not edit any files, just reply in chat. Keep each display equation on its own line:\n\n' +
    'Inline: $E = mc^2$, digit-leading $10^{-4}$ and $3t^2 - 2t^3$, and $5 stays money.\n\n' +
    '$$A = \\sum_{k=1}^n \\lambda_k \\cdot v_k \\overline{v_k\'} \\tag{4} \\label{eq:spectral}$$\n\n' +
    '$$\\begin{pmatrix} 1 & 0 \\\\ 0 & 1 \\end{pmatrix}$$\n\n' +
+   '$$\\vv{x} \\in \\RR^n \\quad \\myspan(v_1, v_2)$$\n\n' +
    'By $\\eqref{eq:spectral}$ and \\eqref{eq:spectral}, done.');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -70,6 +76,14 @@ function readRoot(frame) {
       katex: root.querySelectorAll('.katex').length,
       display: root.querySelectorAll('.katex-display').length,
       errors: root.querySelectorAll('.katex-error').length,
+      // An undefined control sequence is NOT a .katex-error — KaTeX renders it
+      // as red text. Without this, a reply full of broken macros would score
+      // zero errors and pass.
+      redErrors: root.querySelectorAll('[mathcolor="#cc0000"]').length,
+      // Evidence the macro file took effect: \vv expands to \mathbf and \RR to
+      // \mathbb, neither of which appears anywhere else in the prompt.
+      mathbf: root.querySelectorAll('.mathbf').length,
+      mathbb: root.querySelectorAll('.mathbb').length,
       rawDollars: ((root.innerText || '').match(/\$/g) || []).length,
     };
   });
@@ -141,9 +155,16 @@ function readRoot(frame) {
   console.log('\n[L3] FINAL:', JSON.stringify(snap));
 
   if (snap.errors > 0) await die(`${snap.errors} .katex-error element(s) — KaTeX failed to parse some math.`);
+  if (snap.redErrors > 0) await die(`${snap.redErrors} red error(s) — an undefined command reached the render (a macro did not load?).`);
   if (snap.katex === 0) await die('No .katex elements rendered — math left unrendered (patch not applied or no reply).');
 
   console.log(`\n[L3] ✅ ${snap.katex} .katex (${snap.display} display), 0 errors — render PASS`);
+
+  // Issue #15 live: the macros exist only in the file entrypoint.sh wrote, so
+  // \mathbf / \mathbb in the output can only come from them having loaded.
+  if (snap.mathbf === 0) await die('\\vv{x} did not expand to \\mathbf — the user macro file did not reach the live webview.');
+  if (snap.mathbb === 0) await die('\\RR did not expand to \\mathbb — the user macro file did not reach the live webview.');
+  console.log(`[L3] ✅ user macros rendered live (${snap.mathbf} mathbf, ${snap.mathbb} mathbb) — macro PASS`);
 
   // Issue #14 live: \label must produce its anchor, and BOTH \eqref forms —
   // inside math and bare in prose — must resolve to the \tag number "(4)".
@@ -211,6 +232,20 @@ function readRoot(frame) {
   if (!/\$\$[^$]*\\sum_\{k=1\}\^n[^$]*\$\$/.test(copied)) {
     await die(`display math is not $$-wrapped LaTeX in the copy: ${JSON.stringify(copied)}`);
   }
+
+  // Copying macro-using math must yield the macro CALL, not its expansion —
+  // \vv{x} is what pastes back into the .tex file where \vv is defined.
+  const macroCopy = await cc.evaluate(() => {
+    const ann = [...document.querySelectorAll('#root annotation[encoding="application/x-tex"]')]
+      .map((a) => a.textContent);
+    return {
+      hasCall: ann.some((t) => t.includes('\\vv{x}') && t.includes('\\RR')),
+      expanded: ann.some((t) => t.includes('\\mathbf{x}') && !t.includes('\\vv{x}')),
+    };
+  });
+  if (!macroCopy.hasCall) await die('the copyable source of the macro formula does not contain \\vv{x} / \\RR.');
+  if (macroCopy.expanded) await die('the copyable source was expanded to \\mathbf — the macro call was lost.');
+  console.log('[L3] ✅ macro math copies back as its \\vv{x} / \\RR source, not the expansion');
 
   console.log(`\n[L3] ✅ copy-tex PASS — a real drag + Ctrl+C copied ${JSON.stringify(copied.slice(0, 80))}…`);
   await browser.close();

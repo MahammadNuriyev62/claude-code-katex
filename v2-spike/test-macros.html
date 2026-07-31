@@ -202,7 +202,8 @@ setTimeout(() => {
   const rep = window.__KATEX_MACRO_REPORT;
   const repOk = !!rep && rep.loaded >= 7 && Array.isArray(rep.skipped) &&
                 rep.skipped.some(s => s.snippet.includes('\\bad')) &&
-                rep.skipped.some(s => s.snippet.includes('newenvironment'));
+                rep.skipped.some(s => s.snippet.includes('newenvironment')) &&
+                !!rep.macros && '\\RR' in rep.macros && '\\ZZ' in rep.macros;
   results.push({
     name: 'MACRO 14 — the bundle reports what loaded and what it skipped',
     ok: repOk,
