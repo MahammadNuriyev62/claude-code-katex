@@ -16,6 +16,7 @@ const mockStatusBarItem = {
   show: jest.fn(), hide: jest.fn(), dispose: jest.fn(),
 };
 const mockCreateStatusBarItem = jest.fn().mockReturnValue(mockStatusBarItem);
+const mockGetConfiguration = jest.fn();
 
 jest.mock('vscode', () => ({
   window: {
@@ -32,10 +33,24 @@ jest.mock('vscode', () => ({
     getExtension: mockGetExtension,
     onDidChange: mockOnDidChange,
   },
+  workspace: {
+    getConfiguration: mockGetConfiguration,
+    workspaceFolders: undefined,
+  },
   env: { openExternal: mockOpenExternal },
   Uri: { parse: (s) => s },
   StatusBarAlignment: { Left: 1, Right: 2 },
 }), { virtual: true });
+
+const vscodeMock = require('vscode');
+
+// Makes claudeCodeKatex.* return the given settings; anything unset falls back
+// to the default the extension asks for.
+const setMacroConfig = (cfg) => {
+  mockGetConfiguration.mockReturnValue({
+    get: (key, dflt) => (cfg && Object.prototype.hasOwnProperty.call(cfg, key) ? cfg[key] : dflt),
+  });
+};
 
 const { activate, deactivate, _test } = require('./extension');
 const {
@@ -106,6 +121,9 @@ const readCss = () => fs.readFileSync(path.join(extDir, 'webview', 'index.css'),
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'katex-test-'));
   jest.clearAllMocks();
+  // Default: no macros configured, no workspace open.
+  setMacroConfig({});
+  vscodeMock.workspace.workspaceFolders = undefined;
 });
 
 afterEach(() => {
@@ -564,7 +582,7 @@ describe('activate', () => {
     );
   });
 
-  test('registers 3 commands', () => {
+  test('registers 4 commands', () => {
     mockGetExtension.mockReturnValue({ extensionPath: extDir });
     activate(context);
     const registered = mockRegisterCommand.mock.calls.map((c) => c[0]);
@@ -572,9 +590,10 @@ describe('activate', () => {
       'claude-code-katex.enable',
       'claude-code-katex.disable',
       'claude-code-katex.status',
+      'claude-code-katex.reloadMacros',
     ]));
     expect(registered).not.toContain('claude-code-katex.rerender');
-    expect(registered.length).toBe(3);
+    expect(registered.length).toBe(4);
   });
 
   test('creates a status bar item wired to the status command', () => {
@@ -586,10 +605,10 @@ describe('activate', () => {
     expect(mockStatusBarItem.text).toMatch(/LaTeX/);
   });
 
-  test('pushes 5 disposables (3 commands + status bar + onDidChange)', () => {
+  test('pushes 6 disposables (4 commands + status bar + onDidChange)', () => {
     mockGetExtension.mockReturnValue({ extensionPath: extDir });
     activate(context);
-    expect(context.subscriptions.length).toBe(5);
+    expect(context.subscriptions.length).toBe(6);
   });
 
   test('registers an onDidChange watcher', () => {
@@ -602,6 +621,152 @@ describe('activate', () => {
     mockGetExtension.mockReturnValue(undefined);
     expect(() => activate(context)).not.toThrow();
     expect(mockRegisterCommand).toHaveBeenCalled();
+  });
+});
+
+// ============================================================
+// Reload Macros command
+//
+// Macros are read at activation and refreshed only on request, so this command
+// is the whole refresh story. Each row of its behavior matters: it must never
+// rewrite Claude Code's bundle when nothing changed, and must still work on a
+// patch applied by a build that knew nothing about macros.
+// ============================================================
+describe('Reload Macros command', () => {
+  let context;
+  const getHandler = (name) => mockRegisterCommand.mock.calls.find((c) => c[0] === name)[1];
+  const reload = () => getHandler('claude-code-katex.reloadMacros')();
+
+  beforeEach(() => {
+    setupFakeClaudeCodeExt();
+    setupFakeVendorDir();
+    context = { extensionPath: tmpDir, subscriptions: [] };
+    mockGetExtension.mockReturnValue({ extensionPath: extDir });
+  });
+
+  test('errors when Claude Code is not installed', () => {
+    activate(context);
+    mockGetExtension.mockReturnValue(undefined);
+    reload();
+    expect(mockShowErrorMessage).toHaveBeenCalledWith('Claude Code extension not found.');
+  });
+
+  test('reports "not active" when the webview is unpatched', () => {
+    activate(context);
+    removePatch(extDir);
+    mockShowInformationMessage.mockClear();
+    reload();
+    expect(mockShowInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('not active'),
+    );
+  });
+
+  test('writes nothing when the macros have not changed', () => {
+    setMacroConfig({ macros: { '\\RR': '\\mathbb{R}' } });
+    activate(context);
+    const before = readJs();
+    mockExecuteCommand.mockClear();
+
+    reload();
+
+    expect(readJs()).toBe(before);
+    expect(mockExecuteCommand).not.toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
+    expect(mockShowInformationMessage).toHaveBeenCalledWith(expect.stringContaining('unchanged'));
+  });
+
+  test('rewrites the block and reloads the webview when a macro changed', () => {
+    setMacroConfig({ macros: { '\\RR': '\\mathbb{R}' } });
+    activate(context);
+    const before = readJs();
+
+    setMacroConfig({ macros: { '\\RR': '\\mathbb{Q}' } });
+    reload();
+
+    const after = readJs();
+    expect(after).not.toBe(before);
+    expect(after).toContain('\\\\mathbb{Q}');
+    expect(_test.getMacroHash(after)).not.toBe(_test.getMacroHash(before));
+    expect(mockExecuteCommand).toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
+  });
+
+  test('adds macros to a patch applied before any were configured', () => {
+    activate(context);
+    expect(readJs()).not.toContain(_test.MACRO_BEGIN);
+
+    setMacroConfig({ macros: { '\\RR': '\\mathbb{R}' } });
+    reload();
+
+    expect(readJs()).toContain(_test.MACRO_BEGIN);
+    expect(_test.getMacroHash(readJs())).toBeTruthy();
+    // Still exactly one patch, not a patch applied on top of a patch.
+    expect(readJs().split(PATCH_MARKER).length - 1).toBe(1);
+  });
+
+  test('removes the block when the macros are unconfigured again', () => {
+    setMacroConfig({ macros: { '\\RR': '\\mathbb{R}' } });
+    activate(context);
+
+    setMacroConfig({});
+    reload();
+
+    expect(readJs()).not.toContain(_test.MACRO_BEGIN);
+    expect(_test.getMacroHash(readJs())).toBeNull();
+  });
+
+  test('reports which files could not be read', () => {
+    setMacroConfig({ macroFiles: ['/definitely/not/here.tex'] });
+    activate(context);
+    mockShowInformationMessage.mockClear();
+    mockShowWarningMessage.mockClear();
+    reload();
+    const shown = [...mockShowInformationMessage.mock.calls, ...mockShowWarningMessage.mock.calls]
+      .map((c) => String(c[0])).join(' | ');
+    expect(shown).toContain('here.tex');
+  });
+});
+
+// ============================================================
+// activate — macros
+// ============================================================
+describe('activate with macros', () => {
+  let context;
+  beforeEach(() => {
+    setupFakeClaudeCodeExt();
+    setupFakeVendorDir();
+    context = { extensionPath: tmpDir, subscriptions: [] };
+    mockGetExtension.mockReturnValue({ extensionPath: extDir });
+  });
+
+  test('embeds configured macros when it patches', () => {
+    setMacroConfig({ macros: { '\\RR': '\\mathbb{R}' } });
+    activate(context);
+    expect(readJs()).toContain(_test.MACRO_BEGIN);
+  });
+
+  test('picks up a macro edited between sessions without re-patching', () => {
+    setMacroConfig({ macros: { '\\RR': '\\mathbb{R}' } });
+    activate(context);
+    const first = _test.getMacroHash(readJs());
+
+    setMacroConfig({ macros: { '\\RR': '\\mathbb{Q}' } });
+    mockExecuteCommand.mockClear();
+    activate(context);
+
+    expect(_test.getMacroHash(readJs())).not.toBe(first);
+    expect(readJs().split(PATCH_MARKER).length - 1).toBe(1);
+    expect(mockExecuteCommand).toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
+  });
+
+  test('does nothing when neither the version nor the macros changed', () => {
+    setMacroConfig({ macros: { '\\RR': '\\mathbb{R}' } });
+    activate(context);
+    const before = readJs();
+    mockExecuteCommand.mockClear();
+
+    activate(context);
+
+    expect(readJs()).toBe(before);
+    expect(mockExecuteCommand).not.toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
   });
 });
 
@@ -738,7 +903,17 @@ describe('Status command', () => {
     mockShowInformationMessage.mockClear();
     getHandler('claude-code-katex.status')();
     expect(mockShowInformationMessage).toHaveBeenCalledWith(
-      expect.stringContaining('Active'), 'Reload Webview', 'Reload Window', 'Disable');
+      expect.stringContaining('Active'), 'Reload Webview', 'Reload Macros', 'Reload Window', 'Disable');
+  });
+
+  test('reports the macro configuration', () => {
+    mockGetExtension.mockReturnValue({ extensionPath: extDir });
+    setMacroConfig({ macros: { '\\RR': '\\mathbb{R}' } });
+    activate(context);
+    mockShowInformationMessage.mockClear();
+    getHandler('claude-code-katex.status')();
+    expect(mockShowInformationMessage).toHaveBeenCalledWith(
+      expect.stringContaining('Macros:'), expect.anything(), expect.anything(), expect.anything(), expect.anything());
   });
 
   test('reports Not active with enable/reload actions when not patched', () => {

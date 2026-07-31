@@ -242,6 +242,97 @@ function getPatchedVersion(extDir) {
   }
 }
 
+// --- macro configuration -------------------------------------------------
+
+function readMacroConfig() {
+  try {
+    const cfg = vscode.workspace.getConfiguration('claudeCodeKatex');
+    return { macroFiles: cfg.get('macroFiles', []), macros: cfg.get('macros', {}) };
+  } catch {
+    return { macroFiles: [], macros: {} };
+  }
+}
+
+function currentMacroContext() {
+  let workspaceFolder = null;
+  try {
+    const folders = vscode.workspace.workspaceFolders;
+    if (folders && folders.length && folders[0].uri && folders[0].uri.fsPath) {
+      workspaceFolder = folders[0].uri.fsPath;
+    }
+  } catch { /* no workspace */ }
+  return { home: os.homedir(), workspaceFolder };
+}
+
+const EMPTY_PAYLOAD = { preamble: '', macros: {}, sources: [], truncated: false, isEmpty: true, hash: null };
+
+function currentMacroPayload() {
+  try {
+    return buildMacroPayload(readMacroConfig(), currentMacroContext());
+  } catch (e) {
+    console.warn('[Claude Code LaTeX] Could not read the macro configuration:', e && e.message);
+    return EMPTY_PAYLOAD;
+  }
+}
+
+// The same ingestion the webview runs, loaded lazily and never fatally: this
+// copy exists only to tell the user how many macros loaded. If it is missing
+// or KaTeX will not load in Node, macros still work — only the count is lost.
+let ingestFn;
+function loadIngest() {
+  if (ingestFn === undefined) {
+    try {
+      ingestFn = require('./macro-ingest').ingestMacros;
+    } catch (e) {
+      ingestFn = null;
+      console.warn('[Claude Code LaTeX] Macro report unavailable:', e && e.message);
+    }
+  }
+  return ingestFn;
+}
+
+let vendoredKatex;
+function loadVendoredKatex(vendorDir) {
+  if (vendoredKatex === undefined) {
+    try {
+      vendoredKatex = require(path.join(vendorDir, 'katex.min.js'));
+    } catch (e) {
+      vendoredKatex = null;
+      console.warn('[Claude Code LaTeX] Could not load KaTeX for the macro report:', e && e.message);
+    }
+  }
+  return vendoredKatex;
+}
+
+// One line describing what the user's macro configuration amounts to, shown in
+// the status popup and after a reload. Unreadable sources are always named,
+// even when nothing loaded — silence is the worst answer to "why is my macro
+// not working?".
+function describeMacros(payload, vendorDir) {
+  const failed = (payload.sources || []).filter((s) => s.error);
+  const describeFailures = () => failed.length
+    ? ' — could not read: ' + failed.map((f) => `${f.path} (${f.error})`).join('; ')
+    : '';
+
+  if (payload.isEmpty) return 'no macros configured' + describeFailures();
+
+  const parts = [];
+  const ingest = loadIngest();
+  const katex = ingest ? loadVendoredKatex(vendorDir) : null;
+  if (ingest && katex) {
+    const report = ingest(katex, payload.preamble, payload.macros);
+    parts.push(`${report.loaded} macro${report.loaded === 1 ? '' : 's'} loaded`);
+    if (report.skipped.length) parts.push(`${report.skipped.length} skipped`);
+  } else {
+    const n = Object.keys(payload.macros).length;
+    parts.push(`${n} inline macro${n === 1 ? '' : 's'}`);
+  }
+  const fileCount = (payload.sources || []).filter((s) => !s.error).length;
+  if (fileCount) parts.push(`from ${fileCount} file${fileCount === 1 ? '' : 's'}`);
+  if (payload.truncated) parts.push('size limit reached');
+  return parts.join(', ') + describeFailures();
+}
+
 // Patches Claude Code's webview to render math through its own react-markdown
 // pipeline. Returns true if patched, or false if the react-markdown injection
 // point was not found (a future Claude Code reshaped its bundle) — in which
@@ -466,6 +557,47 @@ function notifyUnsupported() {
     });
 }
 
+// Re-reads the macro configuration and rewrites just the macro block of the
+// already-patched webview. Macros are otherwise read only at activation, so
+// this command is the entire refresh story — deliberately explicit rather than
+// a file watcher rewriting Claude Code's bundle behind the user's back.
+function reloadMacros(vendorDir) {
+  const dir = findClaudeCodeExtDir();
+  if (!dir) {
+    vscode.window.showErrorMessage('Claude Code extension not found.');
+    return;
+  }
+  if (!isPatched(dir)) {
+    vscode.window.showInformationMessage(
+      'Claude Code LaTeX is not active, so there is nothing to reload macros into. Reload the window to apply the patch first.');
+    return;
+  }
+
+  const payload = currentMacroPayload();
+  const summary = describeMacros(payload, vendorDir);
+  const jsPath = path.join(dir, 'webview', 'index.js');
+  try {
+    const body = fs.readFileSync(jsPath, 'utf8');
+    if (getMacroHash(body) === (payload.isEmpty ? null : payload.hash)) {
+      vscode.window.showInformationMessage(`Claude Code LaTeX: macros unchanged (${summary}).`);
+      return;
+    }
+
+    // Rewrite the existing block, or splice one into a patch that predates
+    // macro support.
+    const updated = applyMacroBlock(body, payload) ?? insertMacroBlock(body, payload);
+    if (updated === null) {
+      vscode.window.showWarningMessage(
+        'Claude Code LaTeX could not locate where to place macros in the patched webview. Reload the window to re-apply the patch.');
+      return;
+    }
+    fs.writeFileSync(jsPath, updated);
+    reloadWebviewAndNotify(`Claude Code LaTeX macros reloaded — ${summary}. The webview was reloaded.`);
+  } catch (e) {
+    vscode.window.showErrorMessage('Failed to reload macros: ' + e.message);
+  }
+}
+
 function activate(context) {
   const vendorDir = path.join(context.extensionPath, 'vendor');
 
@@ -474,8 +606,12 @@ function activate(context) {
   const extDir = findClaudeCodeExtDir();
   if (extDir) {
     try {
-      const result = ensurePatched(extDir, vendorDir);
-      if (result === 'fresh') {
+      const macroPayload = currentMacroPayload();
+      const result = ensurePatched(extDir, vendorDir, macroPayload);
+      if (result === 'macros-updated') {
+        reloadWebviewAndNotify(
+          `Claude Code LaTeX macros updated — ${describeMacros(macroPayload, vendorDir)}. The webview was reloaded.`);
+      } else if (result === 'fresh') {
         reloadWebviewAndNotify('Claude Code LaTeX enabled. The webview was reloaded; reload again if any math still looks unrendered.');
       } else if (result === 'refreshed') {
         reloadWebviewAndNotify('Claude Code LaTeX updated. The webview was reloaded; reload again if any math still looks unrendered.');
@@ -502,7 +638,7 @@ function activate(context) {
         return;
       }
       try {
-        if (applyPatch(dir, vendorDir)) {
+        if (applyPatch(dir, vendorDir, currentMacroPayload())) {
           reloadWebviewAndNotify('Claude Code LaTeX enabled. The webview was reloaded; reload again if any math still looks unrendered.');
         } else {
           notifyUnsupported();
@@ -534,6 +670,13 @@ function activate(context) {
     })
   );
 
+  // Reload Macros command
+  context.subscriptions.push(
+    vscode.commands.registerCommand('claude-code-katex.reloadMacros', function() {
+      reloadMacros(vendorDir);
+    })
+  );
+
   // Status command
   context.subscriptions.push(
     vscode.commands.registerCommand('claude-code-katex.status', function() {
@@ -559,16 +702,20 @@ function activate(context) {
       // end: the reload controls users look for here, plus a quick enable/disable.
       // Each button delegates to the existing command / built-in action.
       const actions = active
-        ? ['Reload Webview', 'Reload Window', 'Disable']
+        ? ['Reload Webview', 'Reload Macros', 'Reload Window', 'Disable']
         : ['Enable', 'Reload Window'];
       vscode.window
         .showInformationMessage(
-          'Claude Code LaTeX v' + EXTENSION_VERSION + '\n' + status + '\nClaude Code: ' + dir,
+          'Claude Code LaTeX v' + EXTENSION_VERSION + '\n' + status +
+            '\nMacros: ' + describeMacros(currentMacroPayload(), vendorDir) +
+            '\nClaude Code: ' + dir,
           ...actions
         )
         .then(function(choice) {
           if (choice === 'Reload Webview') {
             vscode.commands.executeCommand('workbench.action.webview.reloadWebviewAction');
+          } else if (choice === 'Reload Macros') {
+            vscode.commands.executeCommand('claude-code-katex.reloadMacros');
           } else if (choice === 'Reload Window') {
             vscode.commands.executeCommand('workbench.action.reloadWindow');
           } else if (choice === 'Enable') {
@@ -616,8 +763,8 @@ function activate(context) {
       const dir = findClaudeCodeExtDir();
       if (dir) {
         try {
-          const result = ensurePatched(dir, vendorDir);
-          if (result === 'fresh' || result === 'refreshed') {
+          const result = ensurePatched(dir, vendorDir, currentMacroPayload());
+          if (result === 'fresh' || result === 'refreshed' || result === 'macros-updated') {
             reloadWebviewAndNotify('Claude Code LaTeX re-applied after a Claude Code update. The webview was reloaded; reload again if any math still looks unrendered.');
           } else if (result === 'unsupported') {
             notifyUnsupported();
@@ -650,6 +797,11 @@ module.exports._test = {
   ensurePatched,
   reloadWebviewAndNotify,
   notifyUnsupported,
+  reloadMacros,
+  describeMacros,
+  readMacroConfig,
+  currentMacroContext,
+  currentMacroPayload,
   EXTENSION_VERSION,
   PATCH_MARKER,
   PATCH_CSS_MARKER,

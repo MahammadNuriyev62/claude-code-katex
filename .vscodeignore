@@ -8,6 +8,7 @@ test-results/**
 package-lock.json
 claude-code-katex-*.vsix
 v2-spike/**
+docs/**
 vendor-v2/**
 CLAUDE.md
 claude-code-latex-demo.gif

@@ -2,7 +2,7 @@
   "name": "claude-code-katex",
   "displayName": "Claude Code LaTeX",
   "description": "Adds LaTeX math rendering to Claude Code chat — inline $...$, display $$...$$, and \\(...\\) / \\[...\\]",
-  "version": "2.0.9",
+  "version": "2.1.0",
   "publisher": "nuriyev",
   "license": "MIT",
   "icon": "icon.png",
@@ -49,8 +49,33 @@
       {
         "command": "claude-code-katex.status",
         "title": "Claude Code LaTeX: Status"
+      },
+      {
+        "command": "claude-code-katex.reloadMacros",
+        "title": "Claude Code LaTeX: Reload Macros"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "Claude Code LaTeX",
+      "properties": {
+        "claudeCodeKatex.macroFiles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "markdownDescription": "LaTeX files whose macro definitions are made available to math in Claude Code chat — `\\newcommand`, `\\renewcommand`, `\\providecommand`, `\\def`, `\\let` and `\\DeclareMathOperator`. Anything else in the file (`\\usepackage`, prose, comments) is ignored, and a definition KaTeX cannot handle is skipped without affecting the others.\n\nSupports `~`, `${workspaceFolder}` and `${userHome}`; a relative path resolves against the first workspace folder.\n\nRun **Claude Code LaTeX: Reload Macros** after editing one of these files."
+        },
+        "claudeCodeKatex.macros": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": {
+            "type": "string"
+          },
+          "markdownDescription": "Macros in KaTeX's own form, for a handful of definitions without a file — for example `{ \"\\\\RR\": \"\\\\mathbb{R}\", \"\\\\vv\": \"\\\\mathbf{#1}\" }`.\n\nApplied after `#claudeCodeKatex.macroFiles#`, so these win on a name defined by both."
+        }
+      }
+    }
   },
   "scripts": {
     "test": "jest",
