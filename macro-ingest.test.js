@@ -4,7 +4,7 @@
 // not the (newer) npm devDependency. If the vendored KaTeX ever stops
 // supporting something these tests rely on, that must fail here rather than in
 // a user's webview.
-const katex = require('../vendor/katex.min.js');
+const katex = require('./vendor/katex.min.js');
 const { ingestMacros } = require('./macro-ingest');
 
 // Renders with a COPY of the ingested macros, so a render's own \gdef side

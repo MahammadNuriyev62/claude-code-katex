@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Claude Code LaTeX — user macro harness</title>
+<link rel="stylesheet" href="/vendor/katex.min.css">
+<script src="/vendor/katex.min.js"></script>
+<script src="/vendor/copy-tex.min.js"></script>
+<!--
+  The payload the extension bakes into the patched webview bundle. It MUST be
+  defined before the bundle loads: ingestion happens once, at load, so that no
+  macro work ever happens per render.
+
+  This is deliberately a nasty preamble — the point is that a real macro file
+  full of things KaTeX cannot do still yields working macros:
+    - a comment and a \usepackage line, which are not definitions
+    - a definition with an unbalanced brace, sitting between good ones
+    - \DeclareMathOperator, which KaTeX does not implement
+    - a redefinition of \vec, which KaTeX already defines
+    - an attempt to hijack \eqref, which must not win
+    - a body containing */, which must not be able to break the payload block
+    - \newenvironment, which is a definition KaTeX genuinely cannot do
+-->
+<script>
+window.__KATEX_USER_PREAMBLE = [
+  '% my shortcuts',
+  '\\usepackage{amsmath}',
+  '\\newcommand{\\RR}{\\mathbb{R}}',
+  '\\newcommand{\\vv}[1]{\\mathbf{#1}}',
+  '\\DeclareMathOperator{\\argmax}{arg\\,max}',
+  '\\DeclareMathOperator{\\myspan}{span}',
+  '\\newcommand{\\bad}{\\frac{1}',
+  '\\newcommand{\\CC}{\\mathbb{C}}',
+  '\\newcommand{\\vec}[1]{\\mathbf{#1}}',
+  '\\renewcommand{\\eqref}[1]{\\text{HIJACKED}}',
+  '\\newcommand{\\weird}{\\text{*/}}',
+  '\\newenvironment{thm}{}{}',
+  '\\newcommand{\\XX}{\\alpha}',
+].join('\n');
+window.__KATEX_USER_MACROS = { '\\ZZ': '\\mathbb{Z}', '\\XX': '\\beta' };
+</script>
+<script src="/vendor/remark-math-bundle.js"></script>
+<style>
+  body { font-family: sans-serif; background:#1e1e2e; color:#ddd; padding:20px; max-width:1100px; }
+  .case { border:1px solid #444; margin:8px 0; padding:8px 10px; border-radius:6px; }
+  .pass { border-color:#4caf50; } .fail { border-color:#f44336; }
+  .label { font-weight:bold; font-size:13px; } .fail .label { color:#f44336; } .pass .label { color:#4caf50; }
+  .render { background:#11111b; padding:10px; margin-top:6px; border-radius:4px; }
+  #summary { font-size:20px; font-weight:bold; padding:12px; margin-bottom:10px; border-radius:6px; background:#181825; }
+</style>
+</head>
+<body>
+<h2>Claude Code LaTeX — user macro harness (real shipping bundle)</h2>
+<div id="summary">running…</div>
+<div id="out"></div>
+<script type="module">
+import React from 'https://esm.sh/react@18.3.1?bundle';
+import { createRoot } from 'https://esm.sh/react-dom@18.3.1/client?bundle&deps=react@18.3.1';
+import Markdown from 'https://esm.sh/react-markdown@9.0.1?bundle&deps=react@18.3.1';
+import remarkGfm from 'https://esm.sh/remark-gfm@4.0.0?bundle';
+
+// EXACT same plugin chain the extension injects into Claude Code.
+const remarkPlugins = [remarkGfm, window.__remarkBracketMath, window.__remarkMath];
+const rehypePlugins = [window.__rehypeKatex];
+
+const R = String.raw;
+// An undefined macro does NOT produce .katex-error — KaTeX renders it as red
+// text (mathcolor="#cc0000"), which is exactly what issue #15 reports seeing.
+// Counting only .katex-error would let every macro case pass vacuously.
+const err = el => el.querySelectorAll('.katex-error, [mathcolor="#cc0000"]').length;
+const kx  = el => el.querySelectorAll('.katex').length;
+const txt = el => (el.querySelector('.katex-html') || el).textContent;
+
+// [name, markdown, predicate(renderEl) -> [ok, detail]]
+const cases = [
+  ['MACRO 1 — a no-argument macro from the file renders', R`$\RR$ is the reals.`,
+    el => [kx(el) === 1 && err(el) === 0 && el.querySelector('.mathbb') !== null,
+           kx(el) + ' katex, ' + err(el) + ' err, mathbb=' + (el.querySelector('.mathbb') !== null)]],
+
+  ['MACRO 2 — a macro taking an argument renders', R`$\vv{x} + \vv{y}$`,
+    el => [kx(el) === 1 && err(el) === 0 && el.querySelectorAll('.mathbf').length === 2,
+           kx(el) + ' katex, ' + err(el) + ' err, mathbf=' + el.querySelectorAll('.mathbf').length]],
+
+  // \myspan, not \argmax: KaTeX already defines \argmax, so that name would
+  // render fine even if the polyfill did nothing at all.
+  ['MACRO 3 — \\DeclareMathOperator is polyfilled to an operator', R`$\myspan(v_1, v_2)$`,
+    el => [kx(el) === 1 && err(el) === 0 && txt(el).includes('span'),
+           kx(el) + ' katex, ' + err(el) + ' err, text=' + JSON.stringify(txt(el))]],
+
+  ['MACRO 3b — \\DeclareMathOperator over a KaTeX built-in name (\\argmax)', R`$\argmax_x f(x)$`,
+    el => [kx(el) === 1 && err(el) === 0 && txt(el).includes('arg'),
+           kx(el) + ' katex, ' + err(el) + ' err, text=' + JSON.stringify(txt(el))]],
+
+  ['MACRO 4 — a broken definition does not stop the definitions after it', R`$\CC$ still works.`,
+    el => [kx(el) === 1 && err(el) === 0 && el.querySelector('.mathbb') !== null,
+           kx(el) + ' katex, ' + err(el) + ' err, mathbb=' + (el.querySelector('.mathbb') !== null)]],
+
+  ['MACRO 5 — a macro from the inline setting renders', R`$\ZZ$ is the integers.`,
+    el => [kx(el) === 1 && err(el) === 0 && el.querySelector('.mathbb') !== null,
+           kx(el) + ' katex, ' + err(el) + ' err, mathbb=' + (el.querySelector('.mathbb') !== null)]],
+
+  ['MACRO 6 — the inline setting wins over the file for the same name', R`$\XX$`,
+    el => [err(el) === 0 && txt(el).includes('β'),
+           err(el) + ' err, text=' + JSON.stringify(txt(el))]],
+
+  ['MACRO 7 — a user macro overrides a KaTeX built-in (\\vec)', R`$\vec{v}$`,
+    el => [kx(el) === 1 && err(el) === 0 && el.querySelector('.mathbf') !== null,
+           kx(el) + ' katex, ' + err(el) + ' err, mathbf=' + (el.querySelector('.mathbf') !== null)]],
+
+  ['MACRO 8 — a user macro CANNOT hijack \\eqref (issue #14 still wins)', R`See $\eqref{eq:unresolved}$ here.`,
+    el => [err(el) === 0 && txt(el).includes('(eq:unresolved)') && !txt(el).includes('HIJACKED'),
+           err(el) + ' err, text=' + JSON.stringify(txt(el))]],
+
+  ['MACRO 9 — \\label / \\eqref resolution still works with macros loaded', R`$$E = mc^2 \tag{3} \label{eq:emc}$$
+
+From \eqref{eq:emc} we conclude.`,
+    el => [err(el) === 0 && el.textContent.includes('From (3) we conclude'),
+           err(el) + ' err, text=' + JSON.stringify((el.textContent.match(/From[^.]*\./) || ['?'])[0])]],
+
+  ['MACRO 10 — a macro works inside tagged display math', R`$$\vv{p} \in \RR^n \tag{7}$$`,
+    el => [el.querySelectorAll('.katex-display').length === 1 && err(el) === 0 &&
+           el.querySelector('.mathbf') !== null && el.textContent.includes('(7)'),
+           err(el) + ' err, display=' + el.querySelectorAll('.katex-display').length]],
+
+  ['MACRO 11 — a macro body containing */ renders (payload cannot be truncated)', R`$\weird$`,
+    el => [kx(el) === 1 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
+
+  ['MACRO 12 — ordinary math and markdown are untouched by a hostile preamble', R`## Heading
+
+- item with $a^2 + b^2 = c^2$
+- $$\int_0^1 x\,dx = \tfrac{1}{2}$$`,
+    el => [el.querySelector('h2') !== null && el.querySelectorAll('li').length === 2 && err(el) === 0 && kx(el) >= 2,
+           'h2=' + (el.querySelector('h2') !== null) + ', li=' + el.querySelectorAll('li').length +
+           ', ' + kx(el) + ' katex, ' + err(el) + ' err']],
+
+  ['MACRO 13 — an undefined macro still errors normally (no silent swallowing)', R`$\neverDefinedAnywhere$`,
+    el => [err(el) >= 1, err(el) + ' err (expected >= 1)']],
+];
+
+const out = document.getElementById('out');
+for (const [name, md] of cases) {
+  const wrap = document.createElement('div');
+  wrap.className = 'case';
+  wrap.innerHTML = '<div class="label">' + name + '</div>';
+  const r = document.createElement('div'); r.className = 'render';
+  wrap.appendChild(r);
+  out.appendChild(wrap);
+  createRoot(r).render(React.createElement(Markdown, { remarkPlugins, rehypePlugins }, md));
+}
+
+setTimeout(() => {
+  const wraps = out.querySelectorAll('.case');
+  const results = [];
+  cases.forEach(([name, md, pred], i) => {
+    const wrap = wraps[i], r = wrap.querySelector('.render');
+    let ok = false, detail = '';
+    try { [ok, detail] = pred(r); } catch (e) { detail = 'threw: ' + e.message; }
+    wrap.classList.add(ok ? 'pass' : 'fail');
+    wrap.querySelector('.label').textContent = (ok ? 'PASS  ' : 'FAIL  ') + name + '  —  ' + detail;
+    results.push({ name, ok, detail });
+  });
+
+  // The ingestion report the bundle exposes for diagnostics — the same thing
+  // the extension shows in its status popup.
+  const rep = window.__KATEX_MACRO_REPORT;
+  const repOk = !!rep && rep.loaded >= 7 && Array.isArray(rep.skipped) &&
+                rep.skipped.some(s => s.snippet.includes('\\bad')) &&
+                rep.skipped.some(s => s.snippet.includes('newenvironment'));
+  results.push({
+    name: 'MACRO 14 — the bundle reports what loaded and what it skipped',
+    ok: repOk,
+    detail: rep ? rep.loaded + ' loaded, skipped=' + JSON.stringify(rep.skipped.map(s => s.snippet)) : 'no report',
+  });
+
+  const passed = results.filter(r => r.ok).length;
+  const s = document.getElementById('summary');
+  s.textContent = passed + ' / ' + results.length + ' passed';
+  s.style.color = passed === results.length ? '#4caf50' : '#f44336';
+  window.__RESULTS = results;
+  window.__DONE = true;
+}, 1800);
+</script>
+</body>
+</html>

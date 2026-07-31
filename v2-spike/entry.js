@@ -17,6 +17,7 @@
 // already defines window.katex.
 import remarkMath from 'remark-math';
 import rehypeKatex from 'rehype-katex';
+import { ingestMacros } from '../macro-ingest.js';
 
 // Escape every single `$` that is NOT part of a valid inline-math pair, so
 // currency ($100, $5M, "$50-$100") stays literal while real math keeps working
@@ -235,18 +236,64 @@ function remarkBracketMath() {
 //   \label{x} -> \htmlId{x}{}   invisible anchor, like LaTeX (consumes the arg)
 //   \eqref{x} -> \text{(x)}     readable textual reference
 //   \ref{x}   -> \text{x}
+const CROSSREF_MACROS = {
+  '\\label': '\\htmlId{#1}{}',
+  '\\eqref': '\\text{(#1)}',
+  '\\ref': '\\text{#1}',
+};
+
+// --- user-defined macros (issue #15) ---------------------------------------
+//
+// The extension bakes the user's macro files and settings into the patched
+// bundle as these two globals — the webview is a sandboxed browser context
+// with no filesystem access, so this is how they arrive.
+//
+// Ingestion runs exactly once, here at load: no macro work ever happens per
+// render, so even a pathological macro file cannot slow down rendering. It is
+// wrapped so that any failure yields no macros rather than broken math.
+const USER_MACROS = (function loadUserMacros() {
+  try {
+    const preamble = typeof window.__KATEX_USER_PREAMBLE === 'string' ? window.__KATEX_USER_PREAMBLE : '';
+    const inline = window.__KATEX_USER_MACROS;
+    if (!preamble && !inline) return {};
+
+    const report = ingestMacros(window.katex, preamble, inline || {});
+    // Exposed for the status popup, the L2 harness, and anyone debugging why
+    // one of their macros did not take.
+    window.__KATEX_MACRO_REPORT = {
+      loaded: report.loaded,
+      skipped: report.skipped,
+      truncated: report.truncated,
+    };
+    console.log('[Claude Code LaTeX] user macros: ' + report.loaded + ' loaded, ' +
+      report.skipped.length + ' skipped' + (report.truncated ? ' (truncated)' : ''),
+      report.skipped);
+
+    const reserved = Object.keys(CROSSREF_MACROS).filter((name) => name in report.macros);
+    if (reserved.length) {
+      console.warn('[Claude Code LaTeX] ' + reserved.join(', ') +
+        ' keep their built-in meaning (\\label/\\ref/\\eqref resolution) and ignore your definition.');
+    }
+    return report.macros;
+  } catch (e) {
+    console.warn('[Claude Code LaTeX] user macros could not be loaded; math renders without them', e);
+    return {};
+  }
+})();
+
 // \htmlId needs `trust`, granted for that single command only, and its
 // htmlExtension strict-mode warning is silenced (it would log per formula).
 // The macros object is rebuilt per plugin instantiation: KaTeX mutates it when
 // input uses \gdef, so a shared object would leak definitions across renders.
+// User macros go in first, so the cross-reference macros above always win —
+// a user macro named \ref must not break issue #14's resolution.
 const realRehypeKatex = rehypeKatex && rehypeKatex.default ? rehypeKatex.default : rehypeKatex;
 function rehypeKatexWithCrossrefs(options) {
   return realRehypeKatex.call(this, {
     ...options,
     macros: {
-      '\\label': '\\htmlId{#1}{}',
-      '\\eqref': '\\text{(#1)}',
-      '\\ref': '\\text{#1}',
+      ...USER_MACROS,
+      ...CROSSREF_MACROS,
       ...(options && options.macros),
     },
     trust: (context) => context.command === '\\htmlId',
