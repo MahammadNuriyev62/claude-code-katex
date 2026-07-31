@@ -45,6 +45,40 @@ The extension patches Claude Code automatically on startup. If you need manual c
 - `Ctrl+Shift+P` → **Claude Code LaTeX: Enable**
 - `Ctrl+Shift+P` → **Claude Code LaTeX: Disable**
 - `Ctrl+Shift+P` → **Claude Code LaTeX: Status**
+- `Ctrl+Shift+P` → **Claude Code LaTeX: Reload Macros**
+
+## Your own macros
+
+If you keep macros in a `.tex` file, point the extension at it and Claude's
+math will use them instead of showing red errors:
+
+```jsonc
+{
+  // Supports ~, ${workspaceFolder} and ${userHome}.
+  "claudeCodeKatex.macroFiles": ["~/tex/macros.tex", "${workspaceFolder}/preamble.tex"],
+
+  // Or define a few inline, in KaTeX's own form. These win on a shared name.
+  "claudeCodeKatex.macros": {
+    "\\RR": "\\mathbb{R}",
+    "\\vv": "\\mathbf{#1}"
+  }
+}
+```
+
+The file can be a slice of a real paper preamble — comments, `\usepackage`
+lines and prose are ignored, and a definition KaTeX cannot handle is skipped
+without affecting the rest. `\newcommand`, `\renewcommand`, `\providecommand`,
+`\def`, `\let` and `\DeclareMathOperator` are all understood, and your
+definition wins over a KaTeX built-in of the same name (`\vec`, `\argmax`, …).
+
+Macros are read when the window loads. After editing a macro file, run
+**Claude Code LaTeX: Reload Macros** (also a button in the status popup, which
+reports how many macros loaded and names any file it could not read).
+
+Two things KaTeX itself cannot do, so neither can this:
+
+- macros with an optional argument — `\newcommand{\x}[2][default]{...}`
+- `\newenvironment`
 
 ## How it works
 

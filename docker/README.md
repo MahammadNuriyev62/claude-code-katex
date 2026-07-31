@@ -6,8 +6,8 @@ against a hand-maintained remote VS Code.
 
 | Level | What it exercises | Browser | Network | Claude auth |
 |------:|-------------------|:-------:|:-------:|:-----------:|
-| **1** | `jest` unit tests — patch lifecycle + injection regex | – | – | – |
-| **2** | The math pipeline through Claude Code's real react-markdown → remark-math → rehype-katex chain (committed Playwright specs + the 26-case torture harness) | ✓ | ✓ (CDN) | – |
+| **1** | `jest` unit tests — patch lifecycle, injection regex, macro payload + macro ingestion | – | – | – |
+| **2** | The math pipeline through Claude Code's real react-markdown → remark-math → rehype-katex chain — the torture harness plus a second page carrying a user macro payload | ✓ | ✓ (CDN) | – |
 | **3** | The **real** extension patching the **real** Claude Code in code-server, asserting KaTeX renders in the live webview | ✓ | ✓ | ✓ |
 
 ## Build
@@ -112,3 +112,7 @@ consume it like normal usage); it never becomes a metered charge.
   If a future Claude Code reshapes this, `smoke` (which only checks the on-disk
   patch) still passes while `3` can't drive the chat — re-probe the webview DOM
   and update these selectors.
+- **`smoke` also covers user macros.** It merges a `claudeCodeKatex.macros`
+  entry into code-server's user settings before launch and asserts the macro
+  payload block and its hash reached the patched webview bundle — the whole
+  settings → extension → bundle path, still with no auth.

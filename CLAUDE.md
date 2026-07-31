@@ -27,9 +27,45 @@ instead of being repaired in the DOM afterward.
   bundle — `applyPatch` returns `false`, touches nothing, and the extension
   shows an "update / report an issue" notice. There is no fallback renderer.
 
+- When the user has configured macros (issue #15), a delimited block is emitted
+  between the KaTeX core and the math bundle, setting
+  `window.__KATEX_USER_PREAMBLE` / `window.__KATEX_USER_MACROS`. **With no
+  macros configured no block is emitted at all**, so the patch stays
+  byte-for-byte what it was before the feature — asserted by a jest snapshot
+  written before the feature existed. Changing a macro rewrites only that block
+  in place; it never restores and re-applies the patch.
+
 The patch is version-stamped; an extension update restores the originals from
 `.katex-bak` and re-applies. Claude Code's `extension.js` is **never modified** —
 only the webview bundle (an isolated browser context) is patched.
+
+## User macros — `macro-ingest.js`
+
+Shared by both sides and therefore at the repo root, not in `v2-spike/`:
+`.vscodeignore` excludes `v2-spike/**`, and `extension.js` requires this module
+at runtime. `entry.js` bundles it for the webview; `extension.js` requires it
+(with the UMD `vendor/katex.min.js`, which loads in Node) only to build the
+report shown in the status popup — that require is fail-soft, since the webview
+does its own ingestion.
+
+It writes no LaTeX parser. KaTeX already reads `\newcommand` / `\def` / `\let`,
+and with `globalGroup: true` it writes each definition into the `macros` object
+passed to it, which later renders reuse. The module decides *what to hand
+KaTeX*: definitions are extracted and everything else (`\usepackage`, prose,
+comments) is dropped, `\DeclareMathOperator` is rewritten to `\operatorname`,
+the whole file is tried in one render first, and only on failure is it applied
+definition-by-definition so one bad line is isolated and reported. Each
+definition is applied to a scratch copy and merged only on success. A
+`\newcommand` KaTeX rejects because it already defines that name is retried as
+`\renewcommand` (and vice versa) — the user's file states the intent plainly.
+
+`ingestMacros` never throws; the worst outcome is an empty macros object.
+Ingestion happens once at bundle load, never per render.
+
+Two things to know when testing macros: ingestion reads the globals **at load**,
+so a harness must set them before the bundle script tag; and an undefined macro
+does not produce `.katex-error` — KaTeX renders it as red text
+(`mathcolor="#cc0000"`), which is what issue #15 reports seeing.
 
 ## The math pipeline — `v2-spike/entry.js`
 
@@ -106,10 +142,13 @@ pinned to the repo's `@playwright/test` version (keep them in lockstep).
 
 ### Level 1 — unit tests (no browser, no network, no auth)
 
-`jest` — patch lifecycle (apply / refresh / remove) and the `V2_INJECT_RE`
-injection. In the container: `docker run --rm img 1`. Locally:
-`node_modules/.bin/jest` (call the binary directly; `npm test` can hit path
-issues).
+`jest` — patch lifecycle (apply / refresh / remove), the `V2_INJECT_RE`
+injection, the macro payload (`extension.macros.test.js`: path resolution,
+size caps, embedding round-trips, in-place rewrite, hash invalidation), and
+macro ingestion (`macro-ingest.test.js`, run against **`vendor/katex.min.js`** —
+the build that ships, not the newer npm devDependency). In the container:
+`docker run --rm img 1`. Locally: `node_modules/.bin/jest` (call the binary
+directly; `npm test` can hit path issues).
 
 ### Level 2 — rendering harness (browser + network, no auth)
 
@@ -120,6 +159,12 @@ case on `window.__RESULTS` (`window.__DONE` flags completion). It pulls React
 from a CDN, so it needs network. In the container (`docker run --rm img 2`),
 `docker/run-harness.js` serves the repo, drives the page headless, and gates on
 the results. Add a case to `test.html` for every rendering bug you fix.
+
+`v2-spike/test-macros.html` is the same harness with a user macro payload set
+before the bundle loads. Keep `test.html` macro-free: it doubles as the guard
+that configuring no macros changes nothing. `run-harness.js` drives both pages
+(`HARNESS_URLS`, comma-separated; the older single-page `HARNESS_URL` still
+works and expands to both).
 
 ### Level 3 — real end-to-end (browser + network + Claude auth)
 

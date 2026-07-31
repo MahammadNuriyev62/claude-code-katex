@@ -1,5 +1,33 @@
 # Changelog
 
+## [2.1.0] - 2026-07-31
+
+### Added
+- **Your own macros now render**
+  ([#15](https://github.com/MahammadNuriyev62/claude-code-katex/issues/15)).
+  Macros defined in a file separate from the conversation used to appear as red
+  unrenderable commands. Point `claudeCodeKatex.macroFiles` at your `.tex`
+  file(s) — `~`, `${workspaceFolder}` and `${userHome}` are supported — or
+  define a few inline with `claudeCodeKatex.macros`.
+
+  The file can be a slice of a real paper preamble: comments, `\usepackage`
+  lines and prose are ignored, and a definition KaTeX cannot handle is skipped
+  without affecting the others. `\newcommand`, `\renewcommand`,
+  `\providecommand`, `\def`, `\let` and `\DeclareMathOperator` are understood
+  (the last is emulated with `\operatorname`, which KaTeX has), and your
+  definition wins over a KaTeX built-in of the same name such as `\vec` or
+  `\argmax`. KaTeX still cannot do optional-argument macros or
+  `\newenvironment`; those are reported as skipped rather than breaking the
+  file.
+
+  Macros are read when the window loads and refreshed by the new **Claude Code
+  LaTeX: Reload Macros** command, also a button in the status popup — which now
+  reports how many macros loaded and names any file it could not read.
+
+  If anything about a macro file is wrong, math renders exactly as it does
+  without the feature; a bad macro can never stop a formula from rendering.
+  Users who configure no macros receive a byte-for-byte identical patch.
+
 ## [2.0.9] - 2026-07-23
 
 ### Fixed

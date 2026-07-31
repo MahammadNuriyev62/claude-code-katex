@@ -130,13 +130,18 @@ window.__KATEX_USER_MACROS = { ... };
   without it, a macro file containing `*/` would truncate the in-place
   replacement and corrupt the patched bundle.
 
-### Ingestion — `v2-spike/macro-ingest.js`
+### Ingestion — `macro-ingest.js`
 
 A pure module: no DOM, no `vscode`, KaTeX passed in as an argument. Bundled
 into `entry.js` for the webview and `require`d by `extension.js` (the vendored
 `vendor/katex.min.js` is UMD and loads in Node — verified, v0.16.40) to produce
 the report shown in VS Code. One implementation, two callers, fully unit
 testable in jest against the exact KaTeX build that ships.
+
+It sits at the repo root rather than in `v2-spike/`: `.vscodeignore` excludes
+`v2-spike/**`, and the extension requires this module at runtime, so a copy
+under `v2-spike/` would not ship. The extension-side require is also fail-soft
+— it only powers the report, and the webview ingests independently.
 
 ```js
 ingestMacros(katex, preambleText, inlineMacros, limits)
@@ -154,15 +159,33 @@ Algorithm:
    `{ macros, globalGroup: true, throwOnError: true }`, discarding the HTML.
    `globalGroup` makes KaTeX write every definition into the passed object.
    A clean file never touches our own scanner.
-4. **Fallback, only if step 3 throws:** reset to an empty object and split the
-   text at brace-depth-0 definition starts (`\newcommand`, `\renewcommand`,
-   `\providecommand`, `\def`, `\gdef`, `\edef`, `\xdef`, `\let`, and starred
-   variants; escaped braces ignored). Text before the first definition is
-   dropped, which is how `\usepackage`/`\documentclass` preamble junk gets
-   discarded. Each chunk is applied to a **scratch copy** and merged only on
-   success, so a definition that fails partway cannot leave a half-defined
-   macro. Failures are collected into `skipped`.
-5. Apply `inlineMacros` over the result.
+4. **Extract definitions, drop everything else.** Lines starting with a
+   definition command (`\newcommand`, `\renewcommand`, `\providecommand`,
+   `\def`, `\gdef`, `\edef`, `\xdef`, `\let`, `\newenvironment`,
+   `\renewenvironment`, and starred variants) begin a chunk; a chunk continues
+   while its braces are open. Everything else — `\usepackage`, prose,
+   `\documentclass` — is never handed to KaTeX at all.
+
+   *Changed during implementation:* the original plan split the text at
+   definition boundaries, which attached a trailing `\usepackage` line to the
+   preceding definition and lost it. Extracting definitions and discarding the
+   rest is both simpler and strictly more robust.
+
+   A chunk also stops at a line that starts a new definition, and at a 20-line
+   cap: an unterminated `{` would otherwise swallow every definition below it.
+5. **Fast path:** render all extracted chunks in one go. Only if that throws is
+   each chunk applied individually, to a **scratch copy** merged on success, so
+   a definition that fails partway cannot leave a half-defined macro. Failures
+   are collected into `skipped`.
+6. **Spelling retry.** KaTeX ships its own `\vec`, `\argmax`, `\Pr` and rejects
+   `\newcommand` for a name it already defines — and `\renewcommand` for one it
+   does not. A macro file that works in the user's document is an unambiguous
+   statement of intent, so a failure whose message ends in "use \renewcommand"
+   / "use \newcommand" is retried once with the other spelling.
+
+   *Added during implementation:* without it, `\DeclareMathOperator{\argmax}`
+   — the single most common line in a real macro file — silently did nothing.
+7. Apply `inlineMacros` over the result.
 
 `throwOnError: true` is essential here: with `false`, KaTeX renders a parse
 error in red *without throwing*, and broken macros would be silently counted
@@ -189,6 +212,8 @@ Every row is a test case.
 | `\usepackage`, `\documentclass`, prose | dropped by the chunk splitter |
 | One malformed definition | that definition skipped; neighbours load |
 | `\newenvironment` and other unsupported definitions | skipped with a reason in the report |
+| An optional-argument macro (`\newcommand{\x}[2][d]{…}`) | KaTeX has no such form; skipped and reported, neighbours unaffected |
+| A definition of a name KaTeX already ships (`\vec`) | the user's definition wins, via the spelling retry |
 | `window.katex` missing at bundle load | ingestion skipped entirely; math renders as today |
 | Ingestion throws for any reason | caught; macros = `{}`; math renders as today |
 | Payload JS is corrupt/garbage | caught by the existing `__KATEX_V2_LOADED` guard; Claude Code markdown unaffected |
@@ -267,6 +292,11 @@ load-time) and adds cases:
 
 `docker/run-harness.js` is generalized to drive both pages and aggregate their
 results; the trusted-path Ctrl+C copy check stays attached to `test.html`.
+
+One trap found while building this: an undefined macro does **not** produce a
+`.katex-error` element. KaTeX renders it as red text (`mathcolor="#cc0000"`) —
+exactly what issue #15 describes — so a harness counting only `.katex-error`
+would let every macro case pass vacuously. The macro page counts both.
 
 ### Level 3 — end-to-end
 

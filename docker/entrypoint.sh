@@ -74,6 +74,18 @@ cc_webview() {
 # gate CI. The full Level 3 adds the live-render assertion on top.
 smoke() {
   log "L3 smoke — patch applies in real code-server (no auth needed)"
+
+  # Configure a user macro before the extension activates, so this also proves
+  # the macro payload travels settings -> extension -> patched webview bundle.
+  # Merged into the baked settings so workspace trust stays disabled.
+  local settings="${HOME}/.local/share/code-server/User/settings.json"
+  node -e '
+    const fs = require("fs"), p = process.argv[1];
+    const s = JSON.parse(fs.readFileSync(p, "utf8"));
+    s["claudeCodeKatex.macros"] = { "\\smoketest": "\\mathbb{S}" };
+    fs.writeFileSync(p, JSON.stringify(s, null, 2));
+  ' "$settings"
+
   start_code_server
   trap 'kill "$CS_PID" 2>/dev/null || true' RETURN
 
@@ -91,6 +103,13 @@ smoke() {
     log "✅ copy-tex contrib present in the patched webview bundle."
   else
     fail "copy-tex marker absent — vendor/copy-tex.min.js did not ship or was not prepended."
+  fi
+  if grep -q 'KaTeX user macros' "$webview" \
+     && grep -q 'katex-macros-hash' "$webview" \
+     && grep -q 'smoketest' "$webview"; then
+    log "✅ User macro payload reached the patched webview bundle."
+  else
+    fail "Macro payload absent — claudeCodeKatex.macros did not reach the patched webview."
   fi
 }
 
