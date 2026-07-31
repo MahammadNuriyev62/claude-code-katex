@@ -291,11 +291,19 @@ function loadIngest() {
   return ingestFn;
 }
 
+// Cached per directory, not globally: a single failed load must not disable
+// the report for the rest of the session if the path later differs.
 let vendoredKatex;
+let vendoredKatexDir;
 function loadVendoredKatex(vendorDir) {
-  if (vendoredKatex === undefined) {
+  if (vendoredKatexDir !== vendorDir) {
+    vendoredKatexDir = vendorDir;
     try {
-      vendoredKatex = require(path.join(vendorDir, 'katex.min.js'));
+      const mod = require(path.join(vendorDir, 'katex.min.js'));
+      // Must be usable, not merely present: a require that yields something
+      // without renderToString would otherwise be reported as "0 macros
+      // loaded" while the webview loads them perfectly well.
+      vendoredKatex = mod && typeof mod.renderToString === 'function' ? mod : null;
     } catch (e) {
       vendoredKatex = null;
       console.warn('[Claude Code LaTeX] Could not load KaTeX for the macro report:', e && e.message);
@@ -321,7 +329,11 @@ function describeMacros(payload, vendorDir) {
   const katex = ingest ? loadVendoredKatex(vendorDir) : null;
   if (ingest && katex) {
     const report = ingest(katex, payload.preamble, payload.macros);
-    parts.push(`${report.loaded} macro${report.loaded === 1 ? '' : 's'} loaded`);
+    // Count the macros the user actually ends up with, not the definitions
+    // parsed out of the files: inline macros never pass through a definition
+    // and would otherwise be reported as "0 macros loaded" while working fine.
+    const available = Object.keys(report.macros).length;
+    parts.push(`${available} macro${available === 1 ? '' : 's'} loaded`);
     if (report.skipped.length) parts.push(`${report.skipped.length} skipped`);
   } else {
     const n = Object.keys(payload.macros).length;

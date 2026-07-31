@@ -726,6 +726,68 @@ describe('Reload Macros command', () => {
 });
 
 // ============================================================
+// What the user actually reads
+//
+// The popup text is the only feedback anyone gets about why a macro did or did
+// not load, and no other test looks at the wording. These pin the exact
+// strings for the cases a user hits.
+// ============================================================
+describe('macro status wording', () => {
+  let context;
+  const getHandler = (name) => mockRegisterCommand.mock.calls.find((c) => c[0] === name)[1];
+  const statusText = () => {
+    getHandler('claude-code-katex.status')();
+    return String(mockShowInformationMessage.mock.calls.at(-1)[0]);
+  };
+
+  beforeEach(() => {
+    setupFakeClaudeCodeExt();
+    // The REAL vendor directory, so the report runs the real ingestion against
+    // the real shipping KaTeX — the mock vendor's stub katex would make every
+    // count zero and the assertions meaningless.
+    context = { extensionPath: __dirname, subscriptions: [] };
+    mockGetExtension.mockReturnValue({ extensionPath: extDir });
+  });
+
+  test('says so plainly when nothing is configured', () => {
+    activate(context);
+    expect(statusText()).toContain('Macros: no macros configured');
+  });
+
+  test('counts the macros that loaded', () => {
+    setMacroConfig({ macros: { '\\RR': '\\mathbb{R}', '\\ZZ': '\\mathbb{Z}' } });
+    activate(context);
+    expect(statusText()).toContain('Macros: 2 macros loaded');
+  });
+
+  test('uses the singular for one macro', () => {
+    setMacroConfig({ macros: { '\\RR': '\\mathbb{R}' } });
+    activate(context);
+    expect(statusText()).toContain('Macros: 1 macro loaded');
+  });
+
+  test('names a file it could not read, with the reason', () => {
+    const missing = path.join(tmpDir, 'not-here.tex');
+    setMacroConfig({ macroFiles: [missing] });
+    activate(context);
+    const text = statusText();
+    expect(text).toContain('could not read');
+    expect(text).toContain('not-here.tex');
+  });
+
+  test('reports how many definitions were skipped', () => {
+    const file = path.join(tmpDir, 'macros.tex');
+    fs.writeFileSync(file, [
+      '\\newcommand{\\RR}{\\mathbb{R}}',
+      '\\newenvironment{thm}{}{}',
+    ].join('\n'));
+    setMacroConfig({ macroFiles: [file] });
+    activate(context);
+    expect(statusText()).toContain('1 macro loaded, 1 skipped, from 1 file');
+  });
+});
+
+// ============================================================
 // activate — macros
 // ============================================================
 describe('activate with macros', () => {
