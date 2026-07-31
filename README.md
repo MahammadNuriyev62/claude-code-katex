@@ -78,11 +78,11 @@ math will use them instead of showing red errors:
 }
 ```
 
-The file can be a slice of a real paper preamble — comments, `\usepackage`
+The file can be a slice of a real paper preamble. Comments, `\usepackage`
 lines and prose are ignored, and a definition KaTeX cannot handle is skipped
 without affecting the rest. `\newcommand`, `\renewcommand`, `\providecommand`,
 `\def`, `\let` and `\DeclareMathOperator` are all understood, and your
-definition wins over a KaTeX built-in of the same name (`\vec`, `\argmax`, …).
+definition wins over a KaTeX built-in of the same name (`\vec`, `\argmax`).
 
 Macros are read when the window loads. After editing a macro file, run
 **Claude Code LaTeX: Reload Macros** (also a button in the status popup, which
@@ -90,7 +90,7 @@ reports how many macros loaded and names any file it could not read).
 
 Two things KaTeX itself cannot do, so neither can this:
 
-- macros with an optional argument — `\newcommand{\x}[2][default]{...}`
+- macros with an optional argument, `\newcommand{\x}[2][default]{...}`
 - `\newenvironment`
 
 ## How it works

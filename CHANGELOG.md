@@ -7,7 +7,7 @@
   ([#15](https://github.com/MahammadNuriyev62/claude-code-katex/issues/15)).
   Macros defined in a file separate from the conversation used to appear as red
   unrenderable commands. Point `claudeCodeKatex.macroFiles` at your `.tex`
-  file(s) — `~`, `${workspaceFolder}` and `${userHome}` are supported — or
+  file(s), where `~`, `${workspaceFolder}` and `${userHome}` are supported, or
   define a few inline with `claudeCodeKatex.macros`.
 
   The file can be a slice of a real paper preamble: comments, `\usepackage`
@@ -21,7 +21,7 @@
   file.
 
   Macros are read when the window loads and refreshed by the new **Claude Code
-  LaTeX: Reload Macros** command, also a button in the status popup — which now
+  LaTeX: Reload Macros** command, also a button in the status popup, which now
   reports how many macros loaded and names any file it could not read.
 
   If anything about a macro file is wrong, math renders exactly as it does
