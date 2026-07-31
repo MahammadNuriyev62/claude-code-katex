@@ -402,6 +402,47 @@ describe('applyMacroBlock', () => {
 });
 
 // ============================================================
+// The whole seam: file -> payload -> embedded block -> ingestion -> render
+//
+// Every other test here stops at the block, and the harness tests start from
+// hand-written globals. This closes the gap between them: the exact text the
+// extension writes into Claude Code's bundle is parsed as JS and fed to the
+// real ingestion against the real shipping KaTeX.
+// ============================================================
+describe('end to end: a macro file becomes rendered math', () => {
+  test('a realistic macros.tex survives embedding and renders', () => {
+    write('macros.tex', [
+      '% my shortcuts',
+      '\\usepackage{amsmath}',
+      '\\newcommand{\\RR}{\\mathbb{R}}',
+      '\\DeclareMathOperator{\\myspan}{span}',
+      '\\newcommand{\\weird}{\\text{*/}}',
+    ].join('\n'));
+
+    const payload = buildMacroPayload(
+      { macroFiles: ['macros.tex'], macros: { '\\ZZ': '\\mathbb{Z}' } },
+      { home: tmp, workspaceFolder: tmp },
+    );
+
+    // Exactly what the webview would see.
+    const globals = evalBlock(renderMacroBlock(payload));
+
+    const { ingestMacros } = require('./macro-ingest');
+    const katex = require('./vendor/katex.min.js');
+    const report = ingestMacros(katex, globals.__KATEX_USER_PREAMBLE, globals.__KATEX_USER_MACROS);
+
+    expect(report.loaded).toBe(3);
+    expect(report.skipped).toEqual([]);
+    const html = katex.renderToString('\\RR \\myspan(v) \\ZZ \\weird', {
+      macros: { ...report.macros },
+      throwOnError: true,
+    });
+    expect(html).toContain('mathbb');
+    expect(html).toContain('span');
+  });
+});
+
+// ============================================================
 // ensurePatched — macro changes between sessions
 // ============================================================
 describe('ensurePatched with macros', () => {
