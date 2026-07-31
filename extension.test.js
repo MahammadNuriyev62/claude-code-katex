@@ -266,6 +266,37 @@ describe('applyPatch', () => {
 });
 
 // ============================================================
+// Patch golden — byte-identity for a zero-config user
+//
+// Pins the exact bytes applyPatch writes when no user macros are configured.
+// Written and committed BEFORE the custom-macro feature, so the snapshot is a
+// genuine record of the shipping patch rather than a description of whatever
+// the code happens to do afterwards. Any later change that alters the patch a
+// zero-config user receives has to break this test deliberately.
+//
+// The version stamp is normalized: a release bump is not a structural change.
+// ============================================================
+describe('patch golden — byte-identity for a zero-config user', () => {
+  beforeEach(() => {
+    setupFakeClaudeCodeExt();
+    setupFakeVendorDir();
+  });
+
+  const normalize = (s) =>
+    s.split(_test.EXTENSION_VERSION).join('<VERSION>');
+
+  test('patched index.js is exactly this', () => {
+    expect(applyPatch(extDir, vendorDir)).toBe(true);
+    expect(normalize(readJs())).toMatchSnapshot();
+  });
+
+  test('patched index.css is exactly this', () => {
+    expect(applyPatch(extDir, vendorDir)).toBe(true);
+    expect(normalize(readCss())).toMatchSnapshot();
+  });
+});
+
+// ============================================================
 // removePatch
 // ============================================================
 describe('removePatch', () => {

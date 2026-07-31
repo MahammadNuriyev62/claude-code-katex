@@ -1,0 +1,35 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`patch golden — byte-identity for a zero-config user patched index.css is exactly this 1`] = `
+"/* original css */ body { margin: 0; }
+/* === KaTeX LaTeX Rendering CSS Patch === */
+/* katex css mock */
+.katex-display {
+  margin: 0.5em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 0.25em 0;
+}
+.katex-display > .katex {
+  white-space: normal;
+}
+.katex {
+  font-size: 1.1em;
+}
+/* === End KaTeX CSS Patch === */"
+`;
+
+exports[`patch golden — byte-identity for a zero-config user patched index.js is exactly this 1`] = `
+"/* === KaTeX LaTeX Rendering Patch === */
+/* katex-ext-version: <VERSION> */
+/* KaTeX Core - MIT License - https://katex.org */
+/* katex core mock */
+/* KaTeX copy-tex extension (copy selection as LaTeX) - MIT License */
+/* copy-tex mock */
+/* remark-math + rehype-katex pipeline */
+/* bundle mock */ window.__KATEX_V2_LOADED=true;
+/* === End KaTeX Patch — Claude Code bundle (math plugins injected) follows === */
+// original claude code webview js
+var tree=R.default.createElement(Md,{rehypePlugins:window.__KATEX_V2_LOADED?[window.__rehypeKatex]:[],remarkPlugins:[gfm].concat(window.__KATEX_V2_LOADED?[window.__remarkBracketMath,window.__remarkMath]:[]),components:{a:1}},src);
+console.log("hello");"
+`;
