@@ -1,9 +1,33 @@
 const vscode = require('vscode');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
 
 const PATCH_MARKER = '/* === KaTeX LaTeX Rendering Patch === */';
 const PATCH_CSS_MARKER = '/* === KaTeX LaTeX Rendering CSS Patch === */';
+
+// --- user macros (issue #15) ----------------------------------------------
+//
+// The webview is a sandboxed browser context: it cannot read the filesystem
+// and there is no runtime channel to it, so a user's macros have to be on
+// disk, inside the patched bundle, before it loads. They live in their own
+// delimited block, which lets "the user changed a macro" be a rewrite of just
+// that region rather than a re-application of the whole patch.
+//
+// When nothing is configured, no block is emitted at all and the patch is
+// byte-for-byte what it was before this feature existed.
+const MACRO_BEGIN = '/* === KaTeX user macros === */';
+const MACRO_END = '/* === End KaTeX user macros === */';
+const MACRO_HASH_PREFIX = '/* katex-macros-hash: ';
+// Where a block is inserted into a patch that predates macro support. Written
+// by applyPatch itself, so it is a stable anchor.
+const BUNDLE_ANCHOR = '/* remark-math + rehype-katex pipeline */';
+
+const MACRO_LIMITS = {
+  maxFileBytes: 256 * 1024,
+  maxTotalBytes: 512 * 1024,
+};
 
 // This extension's own version. It is stamped into the patch (right after
 // PATCH_MARKER) so a newer build can recognize "patched, but by an older
@@ -40,6 +64,158 @@ function findClaudeCodeExtDir() {
   return ext ? ext.extensionPath : null;
 }
 
+// Expands ~, ${userHome} and ${workspaceFolder}, and resolves a relative path
+// against the workspace. Returns null when the path cannot be resolved at all
+// (a relative path with no folder open), which the caller reports like any
+// other unreadable source rather than treating as fatal.
+function resolveMacroPath(raw, ctx) {
+  if (typeof raw !== 'string' || raw.trim() === '') return null;
+  const home = ctx && ctx.home;
+  const workspace = ctx && ctx.workspaceFolder;
+  let p = raw.trim();
+
+  if (p === '~' || p.startsWith('~/') || p.startsWith('~\\')) {
+    if (!home) return null;
+    p = path.join(home, p.slice(1));
+  }
+  if (p.includes('${userHome}')) {
+    if (!home) return null;
+    p = p.split('${userHome}').join(home);
+  }
+  if (p.includes('${workspaceFolder}')) {
+    if (!workspace) return null;
+    p = p.split('${workspaceFolder}').join(workspace);
+  }
+  if (!path.isAbsolute(p)) {
+    if (!workspace) return null;
+    p = path.join(workspace, p);
+  }
+  return path.resolve(p);
+}
+
+// Reads the configured macro files into one preamble. Every failure — missing,
+// a directory, oversize, unreadable — is recorded against that source and the
+// remaining files are still read.
+function readMacroSources(files, ctx, limits) {
+  const lim = { ...MACRO_LIMITS, ...(limits || {}) };
+  const result = { preamble: '', sources: [], truncated: false };
+  if (!Array.isArray(files)) return result;
+
+  const parts = [];
+  let total = 0;
+  for (const raw of files) {
+    const resolved = resolveMacroPath(raw, ctx);
+    if (!resolved) {
+      result.sources.push({ path: String(raw), error: 'could not be resolved (no workspace folder open?)' });
+      continue;
+    }
+    try {
+      const stat = fs.statSync(resolved);
+      if (!stat.isFile()) {
+        result.sources.push({ path: resolved, error: 'not a file' });
+        continue;
+      }
+      if (stat.size > lim.maxFileBytes) {
+        result.sources.push({ path: resolved, error: `too large (${stat.size} bytes; limit ${lim.maxFileBytes})` });
+        continue;
+      }
+      if (total + stat.size > lim.maxTotalBytes) {
+        result.truncated = true;
+        result.sources.push({ path: resolved, error: 'skipped: total macro size limit reached' });
+        continue;
+      }
+      let text = fs.readFileSync(resolved, 'utf8');
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1); // BOM
+      parts.push(text);
+      total += stat.size;
+      result.sources.push({ path: resolved, bytes: stat.size });
+    } catch (e) {
+      result.sources.push({ path: resolved, error: (e && e.message) || String(e) });
+    }
+  }
+  result.preamble = parts.join('\n');
+  return result;
+}
+
+// The resolved macro configuration, plus a hash of exactly what will be
+// embedded. The hash is over content, not paths or mtimes, so re-running with
+// an unchanged macro file writes nothing.
+function buildMacroPayload(config, ctx) {
+  const cfg = config && typeof config === 'object' ? config : {};
+  const macros = cfg.macros && typeof cfg.macros === 'object' ? cfg.macros : {};
+  const read = readMacroSources(cfg.macroFiles, ctx);
+
+  const isEmpty = read.preamble.trim() === '' && Object.keys(macros).length === 0;
+  const canonical = JSON.stringify([
+    read.preamble,
+    Object.keys(macros).sort().map((k) => [k, macros[k]]),
+  ]);
+
+  return {
+    preamble: read.preamble,
+    macros,
+    sources: read.sources,
+    truncated: read.truncated,
+    isEmpty,
+    hash: isEmpty ? null : crypto.createHash('sha256').update(canonical).digest('hex').slice(0, 12),
+  };
+}
+
+// Embeds arbitrary user text as a JS literal. JSON.stringify handles quotes,
+// backslashes and newlines; escaping every `/` as `\/` (an identity escape in
+// both JSON and JS) additionally makes the sequences `*/` and the block's own
+// end marker impossible to express inside the payload — without that, a macro
+// file containing `*/` would truncate the block and corrupt the bundle.
+// U+2028/U+2029 are escaped so the literal is safe in any parser.
+function embedJs(value) {
+  return JSON.stringify(value)
+    .replace(/\//g, '\\/')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+function renderMacroBlock(payload) {
+  return MACRO_BEGIN + '\n' +
+    MACRO_HASH_PREFIX + payload.hash + ' */\n' +
+    'window.__KATEX_USER_PREAMBLE = ' + embedJs(payload.preamble) + ';\n' +
+    'window.__KATEX_USER_MACROS = ' + embedJs(payload.macros) + ';\n' +
+    MACRO_END;
+}
+
+// The macro hash carried by a patched bundle, or null when it has no block.
+function getMacroHash(body) {
+  const start = body.indexOf(MACRO_HASH_PREFIX);
+  if (start === -1) return null;
+  const rest = body.slice(start + MACRO_HASH_PREFIX.length);
+  const end = rest.indexOf(' */');
+  return end === -1 ? null : rest.slice(0, end).trim();
+}
+
+// Rewrites just the macro block of an already-patched bundle. Returns the new
+// body, or null when there is no block to replace. An empty payload removes
+// the block entirely, which is the canonical form of "no macros configured".
+function applyMacroBlock(body, payload) {
+  const start = body.indexOf(MACRO_BEGIN);
+  if (start === -1) return null;
+  const endAt = body.indexOf(MACRO_END, start);
+  if (endAt === -1) return null;
+  const after = endAt + MACRO_END.length;
+
+  if (!payload || payload.isEmpty) {
+    return body.slice(0, start) + body.slice(after).replace(/^\n/, '');
+  }
+  return body.slice(0, start) + renderMacroBlock(payload) + body.slice(after);
+}
+
+// Adds a block to a bundle patched by a build that had no macro support.
+// Returns null when the anchor is missing, leaving the caller to re-patch.
+function insertMacroBlock(body, payload) {
+  if (!payload || payload.isEmpty) return body;
+  const at = body.indexOf(BUNDLE_ANCHOR);
+  if (at === -1) return null;
+  return body.slice(0, at) + renderMacroBlock(payload) + '\n' + body.slice(at);
+}
+
 function isPatched(extDir) {
   try {
     const js = fs.readFileSync(path.join(extDir, 'webview', 'index.js'), 'utf8');
@@ -71,7 +247,7 @@ function getPatchedVersion(extDir) {
 // point was not found (a future Claude Code reshaped its bundle) — in which
 // case nothing on disk is touched and the caller surfaces an "unsupported"
 // message.
-function applyPatch(extDir, vendorDir) {
+function applyPatch(extDir, vendorDir, macroPayload) {
   const webviewDir = path.join(extDir, 'webview');
   const jsPath = path.join(webviewDir, 'index.js');
   const cssPath = path.join(webviewDir, 'index.css');
@@ -123,11 +299,20 @@ function applyPatch(extDir, vendorDir) {
     '$1($2,{rehypePlugins:window.__KATEX_V2_LOADED?[window.__rehypeKatex]:[],' +
     'remarkPlugins:[$3].concat(window.__KATEX_V2_LOADED?[window.__remarkBracketMath,window.__remarkMath]:[])'
   );
+  // The user's macros, if any. Emitted after KaTeX core (ingestion needs
+  // window.katex) and before the math bundle (which consumes them at load).
+  // No macros configured -> no block, and the patch is byte-for-byte what it
+  // was before this feature existed.
+  const macroBlock = macroPayload && !macroPayload.isEmpty
+    ? renderMacroBlock(macroPayload) + '\n'
+    : '';
+
   fs.writeFileSync(jsPath,
     `${PATCH_MARKER}\n${PATCH_VERSION_PREFIX}${EXTENSION_VERSION} */\n` +
     `/* KaTeX Core - MIT License - https://katex.org */\n${katexCore}\n` +
     (copyTex ? `/* KaTeX copy-tex extension (copy selection as LaTeX) - MIT License */\n${copyTex}\n` : '') +
-    `/* remark-math + rehype-katex pipeline */\n${v2Bundle}\n` +
+    macroBlock +
+    `${BUNDLE_ANCHOR}\n${v2Bundle}\n` +
     `/* === End KaTeX Patch — Claude Code bundle (math plugins injected) follows === */\n` +
     injectedBody
   );
@@ -202,11 +387,30 @@ function canRestoreOriginals(extDir) {
 //   'skipped'     - patch is stale but cannot be refreshed safely; left untouched
 //   'unsupported' - the react-markdown injection point was not found
 // May throw on filesystem errors from applyPatch/removePatch; callers handle.
-function ensurePatched(extDir, vendorDir) {
+function ensurePatched(extDir, vendorDir, macroPayload) {
   if (!isPatched(extDir)) {
-    return applyPatch(extDir, vendorDir) ? 'fresh' : 'unsupported';
+    return applyPatch(extDir, vendorDir, macroPayload) ? 'fresh' : 'unsupported';
   }
   if (getPatchedVersion(extDir) === EXTENSION_VERSION) {
+    // Right build already patched. The macros may still have changed since the
+    // last session — that is a rewrite of one delimited region, not a reason to
+    // restore and re-apply the whole patch.
+    const jsPath = path.join(extDir, 'webview', 'index.js');
+    const body = fs.readFileSync(jsPath, 'utf8');
+    const wanted = macroPayload && !macroPayload.isEmpty ? macroPayload.hash : null;
+    if (getMacroHash(body) === wanted) return 'current';
+
+    const rewritten = applyMacroBlock(body, macroPayload);
+    if (rewritten !== null) {
+      fs.writeFileSync(jsPath, rewritten);
+      return 'macros-updated';
+    }
+    // Patched by a build that had no macro block: splice one in at the anchor.
+    const inserted = insertMacroBlock(body, macroPayload);
+    if (inserted !== null) {
+      fs.writeFileSync(jsPath, inserted);
+      return 'macros-updated';
+    }
     return 'current';
   }
   // A patch from an older (or pre-versioning) build is present. Refresh it so
@@ -221,7 +425,7 @@ function ensurePatched(extDir, vendorDir) {
     console.error('[Claude Code LaTeX] Restore did not clear the old patch; not re-applying.');
     return 'skipped';
   }
-  return applyPatch(extDir, vendorDir) ? 'refreshed' : 'unsupported';
+  return applyPatch(extDir, vendorDir, macroPayload) ? 'refreshed' : 'unsupported';
 }
 
 // Reloads the Claude Code webview so an on-disk patch change takes effect
@@ -452,4 +656,16 @@ module.exports._test = {
   PATCH_VERSION_PREFIX,
   V2_INJECT_RE,
   ISSUES_URL,
+  resolveMacroPath,
+  readMacroSources,
+  buildMacroPayload,
+  renderMacroBlock,
+  applyMacroBlock,
+  insertMacroBlock,
+  getMacroHash,
+  MACRO_BEGIN,
+  MACRO_END,
+  MACRO_HASH_PREFIX,
+  MACRO_LIMITS,
+  BUNDLE_ANCHOR,
 };
