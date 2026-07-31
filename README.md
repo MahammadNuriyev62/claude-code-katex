@@ -3,6 +3,7 @@
 Adds LaTeX math rendering to the [Claude Code](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code) VSCode extension. Rendered with [KaTeX](https://katex.org/).
 
 [![Installs](https://img.shields.io/visual-studio-marketplace/i/nuriyev.claude-code-katex)](https://marketplace.visualstudio.com/items?itemName=nuriyev.claude-code-katex)
+[![Open VSX](https://img.shields.io/open-vsx/v/nuriyev/claude-code-katex?label=Open%20VSX)](https://open-vsx.org/extension/nuriyev/claude-code-katex)
 
 Temporary workaround for [anthropics/claude-code#16446](https://github.com/anthropics/claude-code/issues/16446) until native LaTeX rendering is added.
 
@@ -30,6 +31,18 @@ Search for **"Claude Code LaTeX"** in the Extensions tab, or:
 
 ```bash
 code --install-extension nuriyev.claude-code-katex
+```
+
+### From Open VSX
+
+For editors that cannot use the Microsoft Marketplace, such as VSCodium, Cursor
+and Code OSS builds, the extension is published to
+[Open VSX](https://open-vsx.org/extension/nuriyev/claude-code-katex) under the
+same `nuriyev.claude-code-katex` id. Search for **"Claude Code LaTeX"** in the
+Extensions tab, or:
+
+```bash
+codium --install-extension nuriyev.claude-code-katex
 ```
 
 ### From .vsix file
