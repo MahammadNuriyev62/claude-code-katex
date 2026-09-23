@@ -4,6 +4,7 @@
 #   docker run --rm img            # "ci"  -> L1 + L2 (no secrets needed)
 #   docker run --rm img 1          # L1 only (jest)
 #   docker run --rm img 2          # L2 only (rendering harness)
+#   docker run --rm img plan-toggle # plan-preview opt-in lifecycle (no auth)
 #   docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN=... img 3     # L3 only (real e2e)
 #   docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN=... img all   # L1 + L2 + L3
 #   docker run --rm -it img shell  # drop into a shell for debugging
@@ -27,7 +28,7 @@ level2() {
 
   # Canonical L2: the v2 torture harness renders the real shipping bundle through
   # Claude Code's actual react-markdown -> remark-math -> rehype-katex chain.
-  log "Torture harness (test/harness/rendering.html + test/harness/macros.html)"
+  log "Torture harness (rendering.html + macros.html + plan-preview.html)"
   python3 -m http.server "$HARNESS_PORT" --directory /app >/tmp/harness.log 2>&1 &
   local srv=$!
   trap 'kill "$srv" 2>/dev/null || true' RETURN
@@ -36,7 +37,7 @@ level2() {
     curl -sf "http://127.0.0.1:${HARNESS_PORT}/test/harness/rendering.html" -o /dev/null && break
     sleep 0.25
   done
-  HARNESS_URLS="http://127.0.0.1:${HARNESS_PORT}/test/harness/rendering.html,http://127.0.0.1:${HARNESS_PORT}/test/harness/macros.html" \
+  HARNESS_URLS="http://127.0.0.1:${HARNESS_PORT}/test/harness/rendering.html,http://127.0.0.1:${HARNESS_PORT}/test/harness/macros.html,http://127.0.0.1:${HARNESS_PORT}/test/harness/plan-preview.html" \
     node docker/run-harness.js
 }
 
@@ -64,6 +65,13 @@ start_code_server() {
 # Resolves the installed Claude Code webview bundle path inside code-server.
 cc_webview() {
   ls -d "${HOME}"/.local/share/code-server/extensions/anthropic.claude-code-*/webview/index.js 2>/dev/null \
+    | sort -V | tail -1
+}
+
+# Claude Code's HOST bundle — patched separately for the plan approval view
+# (issue #17), since that panel's Markdown is rendered in the extension host.
+cc_host() {
+  ls -d "${HOME}"/.local/share/code-server/extensions/anthropic.claude-code-*/extension.js 2>/dev/null \
     | sort -V | tail -1
 }
 
@@ -127,6 +135,35 @@ smoke() {
   else
     fail "Macro payload absent — claudeCodeKatex.macros did not reach the patched webview."
   fi
+
+  # The experimental plan integration is off by default, so normal activation
+  # must leave Claude Code's host bundle and backup state untouched.
+  local host; host="$(cc_host)"
+  [ -n "$host" ] || fail "Claude Code host bundle not found under code-server extensions."
+  log "Checking default-off plan-preview state in: $host"
+  if grep -q 'KaTeX plan-preview patch' "$host"; then
+    fail "Plan-preview patch present even though claudeCodeKatex.renderPlanPreview defaults to false."
+  elif [ -f "${host}.katex-bak" ]; then
+    fail "Plan-preview backup created even though the integration is disabled."
+  else
+    log "✅ Plan approval integration stayed off and left the host bundle untouched."
+  fi
+}
+
+plan_toggle() {
+  log "Plan toggle — opt-in setting controls the real Claude Code host patch"
+  local settings="${HOME}/.local/share/code-server/User/settings.json"
+  node -e '
+    const fs = require("fs"), p = process.argv[1];
+    const s = JSON.parse(fs.readFileSync(p, "utf8"));
+    s["claudeCodeKatex.renderPlanPreview"] = false;
+    fs.writeFileSync(p, JSON.stringify(s, null, 2));
+  ' "$settings"
+
+  start_code_server
+  trap 'kill "$CS_PID" 2>/dev/null || true' RETURN
+
+  CODE_URL="http://127.0.0.1:${CODE_PORT}/?folder=/workspace" node docker/plan-toggle.js
 }
 
 # Auth-free, but stronger than smoke: attaches to the real Claude Code webview
@@ -168,10 +205,11 @@ case "${1:-ci}" in
   3|l3|level3)   level3 ;;
   smoke)         smoke ;;
   macros)        macros_in_webview ;;
+  plan-toggle)   plan_toggle ;;
   ci)            level1; level2 ;;
-  all)           level1; level2; macros_in_webview; level3 ;;
+  all)           level1; level2; macros_in_webview; plan_toggle; level3 ;;
   shell|bash)    exec bash ;;
-  *)             fail "Unknown command: ${1}. Use one of: 1 2 3 smoke macros ci all shell" ;;
+  *)             fail "Unknown command: ${1}. Use one of: 1 2 3 smoke macros plan-toggle ci all shell" ;;
 esac
 
 log "Done."

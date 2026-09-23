@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Claude Code LaTeX — plan approval view harness</title>
+<link rel="stylesheet" href="/vendor/katex.min.css">
+<script src="/vendor/katex.min.js"></script>
+<!-- Injected into the plan panel too, so a copied selection yields LaTeX. -->
+<script src="/vendor/copy-tex.min.js"></script>
+<style>
+  body { font-family: sans-serif; background:#1e1e2e; color:#ddd; padding:20px; max-width:1100px; }
+  .case { border:1px solid #444; margin:8px 0; padding:8px 10px; border-radius:6px; }
+  .pass { border-color:#4caf50; } .fail { border-color:#f44336; }
+  .label { font-weight:bold; font-size:13px; } .fail .label { color:#f44336; } .pass .label { color:#4caf50; }
+  .render { background:#11111b; padding:10px; margin-top:6px; border-radius:4px; }
+  #summary { font-size:20px; font-weight:bold; padding:12px; margin-bottom:10px; border-radius:6px; background:#181825; }
+  .katex-plan-display{display:block;margin:0.6em 0;text-align:center;overflow-x:auto;overflow-y:hidden;}
+</style>
+</head>
+<body>
+<h2>Claude Code LaTeX — plan approval view (issue #17)</h2>
+<div id="summary">running…</div>
+<!-- The panel's own content element: the renderer attaches to #content by id,
+     exactly as it does inside Claude Code's plan preview. -->
+<div id="content"></div>
+<div id="out"></div>
+<script type="module">
+// Level-2 harness for the plan approval view.
+//
+// The chat harness (rendering.html) drives the shipping webview bundle. This one
+// drives the OTHER path: the plan panel, where Claude Code renders Markdown in
+// the extension host with marked and posts only sanitized HTML to the webview.
+// So this page runs the real chain, in order:
+//
+//   real marked  ->  plan-patch.js host runtime (math lifted out verbatim)
+//                ->  Claude Code's real sanitizer allowlist
+//                ->  the injected panel renderer (KaTeX)
+//
+// marked is the actual library from a CDN, not a stand-in: the whole design
+// exists because CommonMark destroys `\[`, `\\` and friends, and only the real
+// parser proves that it does not reach the math.
+import { marked } from 'https://esm.sh/marked@12.0.2?bundle';
+
+const R = String.raw;
+const results = [];
+const out = document.getElementById('out');
+const content = document.getElementById('content');
+
+// --- Claude Code's plan-panel sanitizer, copied from its webview template ---
+// Verbatim allowlists: if a Claude Code update ever drops <span> or class from
+// them, the injected math spans would be stripped and these cases fail loudly.
+const ALLOWED_TAGS = new Set([
+  'h1','h2','h3','h4','h5','h6','p','br','hr','blockquote',
+  'ul','ol','li','dl','dt','dd',
+  'strong','em','b','i','u','s','del','ins','sub','sup','mark',
+  'a','code','pre','kbd','var','samp',
+  'table','thead','tbody','tfoot','tr','th','td','caption','colgroup','col',
+  'img','figure','figcaption',
+  'div','span','details','summary','input',
+]);
+const ALLOWED_ATTRS = new Set([
+  'href','src','alt','title','id','class','colspan','rowspan',
+  'align','valign','scope','headers',
+  'open','start','reversed','type',
+  'width','height','checked','disabled',
+]);
+
+function sanitizeHtml(html) {
+  const doc = new DOMParser().parseFromString('<div>' + html + '</div>', 'text/html');
+  sanitizeNode(doc.body.firstChild);
+  return doc.body.firstChild.innerHTML;
+}
+
+function sanitizeNode(node) {
+  let child = node.firstChild;
+  while (child) {
+    const next = child.nextSibling;
+    if (child.nodeType === 1) {
+      const tag = child.tagName.toLowerCase();
+      if (!ALLOWED_TAGS.has(tag)) {
+        while (child.firstChild) node.insertBefore(child.firstChild, child);
+        node.removeChild(child);
+      } else {
+        for (const attr of Array.from(child.attributes)) {
+          const name = attr.name.toLowerCase();
+          if (!ALLOWED_ATTRS.has(name) || name.startsWith('on')) child.removeAttribute(attr.name);
+          if ((name === 'href' || name === 'src') && /^\s*javascript:/i.test(child.getAttribute(attr.name) || '')) {
+            child.removeAttribute(attr.name);
+          }
+        }
+        sanitizeNode(child);
+      }
+    }
+    child = next;
+  }
+}
+
+// --- the extension's own code, loaded the way the patch ships it ------------
+const planSource = await (await fetch('/plan-patch.js')).text();
+const planModule = { exports: {} };
+new Function('module', 'exports', 'require', planSource)(planModule, planModule.exports, () => ({}));
+const plan = planModule.exports;
+
+// Install the host runtime (in Claude Code this runs in the extension host).
+new Function('(' + plan.planHostRuntime.toString() + ')();')();
+
+// A user macro payload, so the panel is also proven to honour issue #15's
+// macros — the panel does its own ingestion, independent of the webview.
+const MACRO_PAYLOAD = {
+  preamble: R`\newcommand{\RR}{\mathbb{R}}` + '\n' + R`\DeclareMathOperator{\tr}{tr}`,
+  macros: { '\\ZZ': '\\mathbb{Z}' },
+};
+
+// The exact <script> body the patch injects into the panel document.
+const macroIngestSource = await (await fetch('/macro-ingest.js')).text();
+const clientScript = plan.buildClientScript(macroIngestSource, MACRO_PAYLOAD);
+
+// One plan's Markdown, all the way to rendered DOM.
+const renderPlan = (markdown) => sanitizeHtml(window.__KATEX_PLAN_MD(markdown, (src) => marked.parse(src)));
+
+const err = el => el.querySelectorAll('.katex-error').length;
+const kx  = el => el.querySelectorAll('.katex').length;
+const mtr = el => el.querySelectorAll('mtr').length;
+const red = el => [...el.querySelectorAll('[mathcolor="#cc0000"]')].length; // undefined macro
+const display = el => el.querySelectorAll('.katex-plan-display').length;
+
+// [name, plan markdown, predicate(caseEl) -> [ok, detail]]
+const cases = [
+  ['DELIMS — \\[ … \\] display math survives CommonMark', R`Then we solve:
+
+\[ E = mc^2 \]
+
+and continue.`,
+    el => [kx(el) === 1 && display(el) === 1 && err(el) === 0,
+           kx(el) + ' katex, ' + display(el) + ' display, ' + err(el) + ' err']],
+
+  ['DELIMS — \\( … \\) inline math survives CommonMark', R`the value \(x_1\) is fixed`,
+    el => [kx(el) === 1 && display(el) === 0 && err(el) === 0, kx(el) + ' katex, ' + display(el) + ' display']],
+
+  ['ROWS — \\\\ row separators survive (2×2 matrix)', R`$$\begin{bmatrix} a & b \\ c & d \end{bmatrix}$$`,
+    el => [mtr(el) === 2 && err(el) === 0, mtr(el) + ' rows, ' + err(el) + ' err']],
+
+  ['ROWS — \\\\[6pt] keeps its length argument', R`$$\begin{aligned} \alpha &= \beta \\[6pt] \gamma &= \delta \end{aligned}$$`,
+    el => [mtr(el) === 2 && err(el) === 0, mtr(el) + ' rows, ' + err(el) + ' err']],
+
+  ['BLOCK — multi-line $$ block', R`$$
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+$$`,
+    el => [kx(el) === 1 && display(el) === 1 && err(el) === 0, kx(el) + ' katex, ' + display(el) + ' display']],
+
+  // Also the target docker/run-harness.js selects for its trusted Ctrl+C check:
+  // copying rendered math out of a plan must yield its LaTeX source.
+  ['COPYTEX — display math is copyable as LaTeX', R`$$\oint_C \mathbf{F}\cdot d\mathbf{r} = 0$$`,
+    el => [kx(el) === 1 && err(el) === 0 &&
+           el.querySelectorAll('annotation[encoding="application/x-tex"]').length === 1,
+           kx(el) + ' katex, ' + err(el) + ' err']],
+
+  ['INLINE — $…$ inside a list item', `- first, with $a^2 + b^2 = c^2$ inline\n- second`,
+    el => [kx(el) === 1 && el.querySelectorAll('li').length === 2 && err(el) === 0,
+           kx(el) + ' katex, ' + el.querySelectorAll('li').length + ' items']],
+
+  ['INLINE — underscores are subscripts, not emphasis', R`$x_1 + y_2 = z_3$`,
+    el => [kx(el) === 1 && el.querySelectorAll('em').length === 0 && err(el) === 0,
+           kx(el) + ' katex, ' + el.querySelectorAll('em').length + ' em']],
+
+  ['CURRENCY — prices are not math', 'It costs $5 and $10, while $y = 3$ holds.',
+    el => [kx(el) === 1 && el.textContent.includes('$5 and $10'),
+           kx(el) + ' katex, text=' + JSON.stringify(el.textContent.trim())]],
+
+  ['CODE — LaTeX in a fenced block stays literal', '```latex\n$$ \\frac{a}{b} $$\n```',
+    el => [kx(el) === 0 && el.querySelectorAll('pre code').length === 1 && el.textContent.includes('\\frac{a}{b}'),
+           kx(el) + ' katex, ' + el.querySelectorAll('pre code').length + ' code blocks']],
+
+  ['CODE — LaTeX in an inline code span stays literal', 'Use `$x$` for inline math.',
+    el => [kx(el) === 0 && el.querySelectorAll('code').length === 1, kx(el) + ' katex']],
+
+  ['ESCAPE — < inside math is math, not markup', R`$a < b$ and $c > d$`,
+    el => [kx(el) === 2 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
+
+  ['CROSSREF — \\eqref resolves to the equation \\tag (issue #14)', R`$$ a = b \tag{4} \label{eq:key} $$
+
+From \eqref{eq:key} it follows.`,
+    el => [el.textContent.includes('From (4) it follows') && err(el) === 0,
+           JSON.stringify(el.textContent.trim().slice(-40))]],
+
+  ['MACROS — a macro file definition resolves in the panel (issue #15)', R`$\RR^n$ and $\ZZ$ and $\tr(A)$`,
+    el => [kx(el) === 3 && err(el) === 0 && red(el) === 0,
+           kx(el) + ' katex, ' + err(el) + ' err, ' + red(el) + ' undefined']],
+
+  ['STRUCTURE — headings and prose still render as Markdown', '# Plan\n\nStep one: $x$\n\n## Details\n\n- a\n- b',
+    el => [el.querySelectorAll('h1').length === 1 && el.querySelectorAll('h2').length === 1 && kx(el) === 1,
+           el.querySelectorAll('h1').length + ' h1, ' + el.querySelectorAll('h2').length + ' h2']],
+
+  ['SANITIZER — injected math spans survive the panel allowlist', R`$$x$$`,
+    el => [el.querySelectorAll('.katex-plan-math').length === 1,
+           el.querySelectorAll('.katex-plan-math').length + ' spans']],
+
+  // The tag is assembled here so this page's own <script> is not ended by it.
+  ['SANITIZER — script tags in a plan are still stripped', 'Before <scr' + 'ipt>window.__PWNED=1</scr' + 'ipt> after $z$',
+    el => [!window.__PWNED && el.querySelectorAll('script').length === 0 && kx(el) === 1,
+           'pwned=' + !!window.__PWNED]],
+
+  ['PLAIN — a plan with no math renders untouched', '# Plan\n\nNo math at all here.',
+    el => [kx(el) === 0 && el.querySelectorAll('.katex-plan-math').length === 0 && el.querySelectorAll('h1').length === 1,
+           kx(el) + ' katex']],
+];
+
+// Build every case into #content first, then start the renderer once — the
+// panel works the same way: the document is loaded, then content arrives.
+for (const [name, markdown] of cases) {
+  const box = document.createElement('div');
+  box.className = 'case';
+  box.innerHTML = '<div class="label"></div><div class="render"></div>';
+  box.querySelector('.label').textContent = name;
+  box.querySelector('.render').innerHTML = renderPlan(markdown);
+  content.appendChild(box);
+}
+
+// The injected panel script: macro ingestion + the renderer, verbatim.
+new Function(clientScript)();
+
+const settle = () => new Promise((r) => setTimeout(() => requestAnimationFrame(() => r()), 30));
+await settle();
+
+const boxes = [...content.querySelectorAll('.case')];
+cases.forEach(([name, , predicate], i) => {
+  const el = boxes[i].querySelector('.render');
+  let ok = false, detail = '';
+  try {
+    [ok, detail] = predicate(el);
+  } catch (e) {
+    detail = 'threw: ' + e.message;
+  }
+  boxes[i].classList.add(ok ? 'pass' : 'fail');
+  results.push({ name, ok, detail });
+});
+
+// A plan update replaces #content wholesale; the renderer has to catch the new
+// math through its MutationObserver, with no second page load.
+const updated = document.createElement('div');
+updated.className = 'case';
+updated.innerHTML = '<div class="label">UPDATE — math in a revised plan renders without a reload</div>' +
+  '<div class="render"></div>';
+content.appendChild(updated);
+updated.querySelector('.render').innerHTML = renderPlan(R`Revised: $$\sum_{k=1}^{n} k = \frac{n(n+1)}{2}$$`);
+await settle();
+{
+  const el = updated.querySelector('.render');
+  const ok = kx(el) === 1 && err(el) === 0;
+  updated.classList.add(ok ? 'pass' : 'fail');
+  results.push({ name: 'UPDATE — math in a revised plan renders without a reload', ok, detail: kx(el) + ' katex, ' + err(el) + ' err' });
+}
+
+// Rendering must not run twice over the same span (KaTeX's own DOM writes feed
+// the observer that triggered them).
+{
+  const spans = content.querySelectorAll('.katex-plan-math');
+  const doubled = [...spans].filter((s) => s.querySelectorAll('.katex').length > 1).length;
+  const undone = [...spans].filter((s) => !s.className.includes('katex-plan-done')).length;
+  const ok = doubled === 0 && undone === 0;
+  results.push({ name: 'IDEMPOTENT — every span rendered exactly once', ok, detail: doubled + ' doubled, ' + undone + ' unrendered' });
+}
+
+const passed = results.filter((r) => r.ok).length;
+document.getElementById('summary').textContent = `${passed}/${results.length} passed`;
+document.getElementById('summary').style.color = passed === results.length ? '#4caf50' : '#f44336';
+out.innerHTML = results.filter((r) => !r.ok).map((r) => `<div class="case fail"><div class="label">${r.name}</div><div>${r.detail}</div></div>`).join('');
+
+window.__RESULTS = results;
+window.__DONE = true;
+</script>
+</body>
+</html>

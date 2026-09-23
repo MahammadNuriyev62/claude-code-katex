@@ -36,8 +36,51 @@ instead of being repaired in the DOM afterward.
   in place; it never restores and re-applies the patch.
 
 The patch is version-stamped; an extension update restores the originals from
-`.katex-bak` and re-applies. Claude Code's `extension.js` is **never modified** —
-only the webview bundle (an isolated browser context) is patched.
+`.katex-bak` and re-applies.
+
+## The plan approval view - `plan-patch.js`
+
+The plan panel Claude Code opens on the side is a **second webview**
+(viewType `claudePlanPreview`) that the host `extension.js` creates, renders
+Markdown for with marked, and posts only sanitized HTML to. Nothing about the
+webview-bundle patch can reach it (issue #17), so this is the one place the
+extension patches Claude Code's **host** `extension.js`.
+
+This integration is experimental and gated by the default-off
+`claudeCodeKatex.renderPlanPreview` setting. Changing the setting applies or
+restores the host patch immediately and offers a full window reload.
+
+Two anchored rewrites, both required to match exactly once or nothing is
+touched:
+
+- the Markdown function (`function X(e){let t=M.parse(e);return typeof
+  t==="string"?t:""}`) is wrapped so math is lifted out of the raw plan text
+  **before** marked runs and put back afterwards as
+  `<span class="katex-plan-math ...">` carrying the LaTeX as **text**. Verbatim
+  capture is the point, exactly as in chat: CommonMark eats `\[` and collapses
+  `\\`. Text (not attributes) because the panel runs the HTML through an
+  allowlist sanitizer, which keeps `<span>` and `class`.
+- the panel-HTML function (`function Y(){let e=nonce();return
+  T.replaceAll("{{NONCE}}",e)}`) is wrapped so `__KATEX_PLAN_HTML` appends
+  KaTeX core, copy-tex, the stylesheet (fonts inlined as `data:` URIs) and the
+  renderer, and adds `font-src data:` to the panel's CSP. The panel CSP is
+  `default-src 'none'` with no `font-src`, so without that every KaTeX font is
+  blocked.
+
+The runtimes are real functions in `plan-patch.js`, serialized with
+`Function.prototype.toString()`, so they are unit-tested directly and shipped
+as the same code. Both are self-contained: no closures over the module, no
+`require`.
+
+Because this is another extension's host code, `extension.js` never writes what
+it has not checked: the original is backed up to `extension.js.katex-bak`, the
+patched source must compile (`vm.Script`, parse only), and the write is
+atomic (temp file + rename). Every failure path leaves Claude Code's file
+untouched; the plan panel then behaves exactly as it does unpatched. A stale
+patch is refreshed only from a backup that is itself unpatched.
+
+Only the plan panel patch touches `extension.js`. The chat patch still modifies
+nothing but the webview bundle (an isolated browser context).
 
 ## User macros — `macro-ingest.js`
 
@@ -116,6 +159,11 @@ Verify against the actual compiled Claude Code webview bundle —
 Code updates frequently and can reshape its bundle, so confirm the injection
 point still matches before relying on it.
 
+The same goes for the plan patch and `extension.js` of that same directory.
+`plan-patch.test.js` checks both anchors against *every* Claude Code installed
+on the machine (skipped where none is), which is the cheapest way to notice a
+reshaped host bundle early.
+
 ## Setup
 
 `npm install` first (Node 18+) — it provides `jest`, `esbuild` (for the bundle
@@ -133,6 +181,7 @@ docker build -t claude-code-katex-tests .
 
 docker run --rm claude-code-katex-tests            # L1 + L2 (no secrets) — the everyday check
 docker run --rm claude-code-katex-tests smoke      # L3 patch check (no secrets)
+docker run --rm claude-code-katex-tests plan-toggle # plan opt-in lifecycle (no secrets)
 docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN="$(claude setup-token)" \
   claude-code-katex-tests all                      # L1 + L2 + L3 (real end-to-end)
 ```
@@ -144,9 +193,12 @@ pinned to the repo's `@playwright/test` version (keep them in lockstep).
 
 `jest` — patch lifecycle (apply / refresh / remove), the `V2_INJECT_RE`
 injection, the macro payload (`extension.macros.test.js`: path resolution,
-size caps, embedding round-trips, in-place rewrite, hash invalidation), and
+size caps, embedding round-trips, in-place rewrite, hash invalidation),
 macro ingestion (`macro-ingest.test.js`, run against **`vendor/katex.min.js`** —
-the build that ships, not the newer npm devDependency). In the container:
+the build that ships, not the newer npm devDependency), and the plan approval
+view (`plan-patch.test.js` for the anchors and the math-through-Markdown
+transform, `extension.plan.test.js` for the on-disk lifecycle: backup, the
+compile gate, refresh, restore). In the container:
 `docker run --rm img 1`. Locally: `node_modules/.bin/jest` (call the binary
 directly; `npm test` can hit path issues).
 
@@ -162,9 +214,17 @@ the results. Add a case to `rendering.html` for every rendering bug you fix.
 
 `test/harness/macros.html` is the same harness with a user macro payload set
 before the bundle loads. Keep `rendering.html` macro-free: it doubles as the guard
-that configuring no macros changes nothing. `run-harness.js` drives both pages
-(`HARNESS_URLS`, comma-separated; the older single-page `HARNESS_URL` still
-works and expands to both).
+that configuring no macros changes nothing.
+
+`test/harness/plan-preview.html` drives the *other* renderer, the plan
+approval view: **real marked** from a CDN, then `plan-patch.js`'s host runtime,
+then Claude Code's own sanitizer allowlist (copied verbatim into the page),
+then the injected panel renderer. Real marked, not a stand-in: the design
+exists because CommonMark destroys `\[` and `\\`, and only the real parser
+proves the math never reaches it.
+
+`run-harness.js` drives all three pages (`HARNESS_URLS`, comma-separated; the
+older single-page `HARNESS_URL` still works and expands to all three).
 
 ### Level 3 — real end-to-end (browser + network + Claude auth)
 
@@ -174,7 +234,9 @@ code-server, asserting KaTeX renders in the live webview.
 - `docker run --rm img smoke` — token-free. Installs the extension-under-test,
   launches code-server, and confirms the extension patched Claude Code's webview
   on activation (greps the patch marker, and that a configured macro payload
-  reached it). Gates CI without any secret.
+  reached it). Also checks the plan-preview patch reached Claude Code's host
+  bundle, that the patched host bundle still parses (`node --check`), and that
+  the backup beside it is pristine. Gates CI without any secret.
 - `docker run --rm img macros` — token-free too, and stronger: attaches to the
   real Claude Code webview, reads `__KATEX_MACRO_REPORT` from the page, and
   renders with the resolved macros through the webview's own KaTeX. The webview
@@ -212,7 +274,8 @@ needs the full code-server + Claude Code + auth stack the image provides.
 ## Submitting changes
 
 - Rebuild and commit `vendor/remark-math-bundle.js` whenever you change
-  `src/webview/entry.js`.
+  `src/webview/entry.js`. `plan-patch.js` needs no build step: it ships as source and its
+  runtimes are serialized at patch time.
 - Run levels 1–2 before committing; run level 3 for rendering changes.
 - Add a `test/harness/rendering.html` regression case for any bug you fix.
 - Keep commit messages in the existing style (`fix:`, `feat:`, `test:`,

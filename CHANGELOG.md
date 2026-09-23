@@ -1,5 +1,27 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Math renders in the plan approval view**
+  ([#17](https://github.com/MahammadNuriyev62/claude-code-katex/issues/17)).
+  The plan Claude opens on the side is a separate view whose Markdown Claude
+  Code renders outside the webview, so the chat patch never reached it and math
+  there stayed as raw LaTeX. It now renders, with the same fidelity as the
+  chat: `$...$`, `$$...$$`, `\(...\)` and `\[...\]`, matrices and `aligned`
+  blocks with their `\\` row separators intact, your configured macros,
+  `\label` / `\ref` / `\eqref`, and copying a selection as LaTeX source.
+  LaTeX inside code blocks and prices like `$5` are left alone, as in the chat.
+
+  The integration is experimental and off by default. Enable
+  `claudeCodeKatex.renderPlanPreview` and accept the offered window reload.
+  Reaching that view means patching one file of Claude Code beyond the webview
+  bundle. The extension backs the original up, refuses to write anything that
+  is not valid JavaScript, and writes atomically. On any Claude Code build it
+  does not recognize it changes nothing at all, and the plan view keeps working
+  exactly as before. Turning the setting off, disabling, or uninstalling
+  restores the original host file.
+
 ## [2.1.0] - 2026-07-31
 
 ### Added

@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const vm = require('vm');
+const planPatch = require('./plan-patch');
 
 const PATCH_MARKER = '/* === KaTeX LaTeX Rendering Patch === */';
 const PATCH_CSS_MARKER = '/* === KaTeX LaTeX Rendering CSS Patch === */';
@@ -253,6 +255,16 @@ function readMacroConfig() {
   }
 }
 
+function readPlanPreviewConfig() {
+  try {
+    return vscode.workspace
+      .getConfiguration('claudeCodeKatex')
+      .get('renderPlanPreview', false) === true;
+  } catch {
+    return false;
+  }
+}
+
 function currentMacroContext() {
   let workspaceFolder = null;
   try {
@@ -343,6 +355,187 @@ function describeMacros(payload, vendorDir) {
   if (fileCount) parts.push(`from ${fileCount} file${fileCount === 1 ? '' : 's'}`);
   if (payload.truncated) parts.push('size limit reached');
   return parts.join(', ') + describeFailures();
+}
+
+// --- plan approval view (issue #17) ---------------------------------------
+//
+// The plan panel is a second webview, built and Markdown-rendered by Claude
+// Code's HOST extension.js, so the webview patch cannot reach it. plan-patch.js
+// explains the two anchored rewrites; everything risky about touching host code
+// is handled here: the original is backed up first, the patched source has to
+// compile before it is written, and the write is atomic. Any failure leaves
+// Claude Code's own file exactly as it was — the plan panel then behaves as it
+// always has, with math unrendered.
+
+// Assets baked into the plan patch. Read from this extension's own vendor dir,
+// never from Claude Code's.
+function readPlanAssets(vendorDir, macroPayload) {
+  const css = planPatch.inlineFonts(
+    fs.readFileSync(path.join(vendorDir, 'katex.min.css'), 'utf8'),
+    path.join(vendorDir, 'fonts'),
+    (p) => fs.readFileSync(p)
+  );
+  let macroIngestSource = '';
+  try {
+    macroIngestSource = fs.readFileSync(path.join(__dirname, 'macro-ingest.js'), 'utf8');
+  } catch (e) {
+    // Only user macros are lost; the panel still renders math.
+    console.warn('[Claude Code LaTeX] Plan panel will render without user macros:', e && e.message);
+  }
+  // copy-tex is optional here for the same reason it is in the webview patch:
+  // a missing file costs only "copy selection as LaTeX", never rendering.
+  const copyTexPath = path.join(vendorDir, 'copy-tex.min.js');
+  return {
+    css,
+    js: fs.readFileSync(path.join(vendorDir, 'katex.min.js'), 'utf8'),
+    copyTex: fs.existsSync(copyTexPath) ? fs.readFileSync(copyTexPath, 'utf8') : '',
+    macroIngestSource,
+    macroPayload: macroPayload && !macroPayload.isEmpty ? macroPayload : null,
+    macroHash: macroPayload && !macroPayload.isEmpty ? macroPayload.hash : 'none',
+    version: EXTENSION_VERSION,
+  };
+}
+
+// A backup we would be willing to restore from: present, non-empty, and not
+// itself carrying a patch.
+function planBackupIsPristine(bak) {
+  try {
+    if (!fs.existsSync(bak)) return false;
+    const body = fs.readFileSync(bak, 'utf8');
+    return body.length > 0 && !planPatch.isPlanPatched(body);
+  } catch {
+    return false;
+  }
+}
+
+// Write via a temp file + rename so an interrupted write can never leave
+// Claude Code with a truncated host bundle.
+function writeFileAtomic(target, body) {
+  const tmp = target + '.katex-tmp';
+  try {
+    fs.writeFileSync(tmp, body);
+    fs.renameSync(tmp, target);
+  } catch (e) {
+    // Rename can fail where the destination is locked (Windows); fall back to
+    // an in-place write, which is what the webview patch has always done.
+    try { fs.unlinkSync(tmp); } catch { /* nothing to clean up */ }
+    fs.writeFileSync(target, body);
+  }
+}
+
+// Ensures Claude Code's host bundle carries this build's plan patch, with the
+// current macros. Returns:
+//   'applied'     - patch written (fresh, refreshed, or macros changed)
+//   'current'     - already carries this exact patch; nothing done
+//   'unsupported' - this Claude Code build does not have the expected shape
+//   'skipped'     - patched by another build and the backup cannot be trusted
+//   'failed'      - the patched source did not compile, or I/O failed
+function ensurePlanPatched(extDir, vendorDir, macroPayload) {
+  const target = path.join(extDir, 'extension.js');
+  const bak = target + '.katex-bak';
+
+  let source;
+  try {
+    source = fs.readFileSync(target, 'utf8');
+  } catch (e) {
+    console.warn('[Claude Code LaTeX] Could not read Claude Code\'s extension.js:', e && e.message);
+    return 'failed';
+  }
+
+  const wantedHash = macroPayload && !macroPayload.isEmpty ? macroPayload.hash : 'none';
+  if (planPatch.isPlanPatched(source)) {
+    if (planPatch.getPlanPatchVersion(source) === EXTENSION_VERSION &&
+        planPatch.getPlanMacroHash(source) === wantedHash) {
+      return 'current';
+    }
+    // Stale patch. Re-apply from the pristine original rather than patching a
+    // patched file; without a trustworthy backup, leave it alone.
+    if (!planBackupIsPristine(bak)) {
+      console.warn('[Claude Code LaTeX] Plan-panel patch is stale but the backup is missing or invalid; leaving it in place.');
+      return 'skipped';
+    }
+    source = fs.readFileSync(bak, 'utf8');
+  } else {
+    // Unpatched, so this file IS the pristine original — refresh the backup,
+    // which also covers Claude Code updating in place.
+    try {
+      fs.copyFileSync(target, bak);
+    } catch (e) {
+      console.warn('[Claude Code LaTeX] Could not back up Claude Code\'s extension.js; not patching the plan panel:', e && e.message);
+      return 'failed';
+    }
+  }
+
+  let result;
+  try {
+    result = planPatch.applyPlanPatch(source, readPlanAssets(vendorDir, macroPayload));
+  } catch (e) {
+    console.warn('[Claude Code LaTeX] Plan-panel patch could not be built:', e && e.message);
+    return 'failed';
+  }
+  if (!result.ok) {
+    console.warn('[Claude Code LaTeX] Plan panel not patched: ' + result.reason);
+    return 'unsupported';
+  }
+
+  // The last gate before touching host code: it has to compile. vm.Script
+  // parses and compiles without executing anything.
+  try {
+    new vm.Script(result.source, { filename: target });
+  } catch (e) {
+    console.error('[Claude Code LaTeX] Refusing to write the plan-panel patch — the result did not compile:', e && e.message);
+    return 'failed';
+  }
+
+  try {
+    writeFileAtomic(target, result.source);
+  } catch (e) {
+    console.error('[Claude Code LaTeX] Could not write the plan-panel patch:', e && e.message);
+    return 'failed';
+  }
+  return 'applied';
+}
+
+// Restores Claude Code's host bundle. Returns true if anything was restored.
+// The backup is kept, exactly like the webview backups, so a later Enable can
+// re-apply without a Claude Code reinstall.
+function removePlanPatch(extDir) {
+  const target = path.join(extDir, 'extension.js');
+  const bak = target + '.katex-bak';
+  try {
+    if (!fs.existsSync(bak)) return false;
+    if (!planBackupIsPristine(bak)) return false;
+    if (!planPatch.isPlanPatched(fs.readFileSync(target, 'utf8'))) return false;
+    writeFileAtomic(target, fs.readFileSync(bak));
+    return true;
+  } catch (e) {
+    console.warn('[Claude Code LaTeX] Could not restore Claude Code\'s extension.js:', e && e.message);
+    return false;
+  }
+}
+
+function isPlanPatched(extDir) {
+  try {
+    return planPatch.isPlanPatched(fs.readFileSync(path.join(extDir, 'extension.js'), 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
+// ensurePlanPatched, wrapped so no plan-panel problem can ever interrupt the
+// chat patch — the feature users actually installed this for.
+function ensurePlanPatchedSafely(extDir, vendorDir, macroPayload) {
+  try {
+    return ensurePlanPatched(extDir, vendorDir, macroPayload);
+  } catch (e) {
+    console.error('[Claude Code LaTeX] Plan-panel patch failed:', e);
+    return 'failed';
+  }
+}
+
+function syncPlanPreview(extDir, vendorDir, macroPayload, enabled) {
+  if (enabled) return ensurePlanPatchedSafely(extDir, vendorDir, macroPayload);
+  return removePlanPatch(extDir) ? 'removed' : 'current';
 }
 
 // Patches Claude Code's webview to render math through its own react-markdown
@@ -448,7 +641,7 @@ function removePatch(extDir) {
   const jsPath = path.join(webviewDir, 'index.js');
   const cssPath = path.join(webviewDir, 'index.css');
 
-  let restored = false;
+  let restored = removePlanPatch(extDir);
   for (const f of [jsPath, cssPath]) {
     const bak = f + '.katex-bak';
     if (fs.existsSync(bak)) {
@@ -491,6 +684,10 @@ function canRestoreOriginals(extDir) {
 //   'unsupported' - the react-markdown injection point was not found
 // May throw on filesystem errors from applyPatch/removePatch; callers handle.
 function ensurePatched(extDir, vendorDir, macroPayload) {
+  return patchWebview(extDir, vendorDir, macroPayload);
+}
+
+function patchWebview(extDir, vendorDir, macroPayload) {
   if (!isPatched(extDir)) {
     return applyPatch(extDir, vendorDir, macroPayload) ? 'fresh' : 'unsupported';
   }
@@ -544,6 +741,16 @@ function reloadWebviewAndNotify(message) {
         vscode.commands.executeCommand('workbench.action.webview.reloadWebviewAction');
       } else if (choice === 'Reload Window') {
         vscode.commands.executeCommand('workbench.action.reloadWindow');
+      }
+    });
+}
+
+function reloadWindowAndNotify(message) {
+  return vscode.window
+    .showInformationMessage(message, 'Reload Window')
+    .then(function(choice) {
+      if (choice === 'Reload Window') {
+        return vscode.commands.executeCommand('workbench.action.reloadWindow');
       }
     });
 }
@@ -620,6 +827,12 @@ function activate(context) {
     try {
       const macroPayload = currentMacroPayload();
       const result = ensurePatched(extDir, vendorDir, macroPayload);
+      const planResult = syncPlanPreview(
+        extDir,
+        vendorDir,
+        macroPayload,
+        readPlanPreviewConfig()
+      );
       if (result === 'macros-updated') {
         reloadWebviewAndNotify(
           `Claude Code LaTeX macros updated — ${describeMacros(macroPayload, vendorDir)}. The webview was reloaded.`);
@@ -629,6 +842,10 @@ function activate(context) {
         reloadWebviewAndNotify('Claude Code LaTeX updated. The webview was reloaded; reload again if any math still looks unrendered.');
       } else if (result === 'unsupported') {
         notifyUnsupported();
+      }
+      if (planResult === 'applied' || planResult === 'removed') {
+        reloadWindowAndNotify(
+          'Claude Code LaTeX changed plan approval view rendering. Reload the VS Code window to apply the change.');
       }
     } catch (e) {
       console.error('[Claude Code LaTeX] Auto-patch failed:', e);
@@ -650,7 +867,8 @@ function activate(context) {
         return;
       }
       try {
-        if (applyPatch(dir, vendorDir, currentMacroPayload())) {
+        if (ensurePatched(dir, vendorDir, currentMacroPayload()) !== 'unsupported') {
+          syncPlanPreview(dir, vendorDir, currentMacroPayload(), readPlanPreviewConfig());
           reloadWebviewAndNotify('Claude Code LaTeX enabled. The webview was reloaded; reload again if any math still looks unrendered.');
         } else {
           notifyUnsupported();
@@ -719,6 +937,10 @@ function activate(context) {
       vscode.window
         .showInformationMessage(
           'Claude Code LaTeX v' + EXTENSION_VERSION + '\n' + status +
+            '\nPlan approval view: ' +
+              (readPlanPreviewConfig()
+                ? (isPlanPatched(dir) ? 'enabled and active' : 'enabled, but not active')
+                : 'disabled') +
             '\nMacros: ' + describeMacros(currentMacroPayload(), vendorDir) +
             '\nClaude Code: ' + dir,
           ...actions
@@ -768,6 +990,30 @@ function activate(context) {
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
 
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration(async function(event) {
+      if (!event.affectsConfiguration('claudeCodeKatex.renderPlanPreview')) return;
+      const dir = findClaudeCodeExtDir();
+      if (!dir) {
+        vscode.window.showErrorMessage('Claude Code extension not found.');
+        return;
+      }
+
+      const enabled = readPlanPreviewConfig();
+      const result = syncPlanPreview(dir, vendorDir, currentMacroPayload(), enabled);
+      refreshStatusBar();
+      if (result === 'failed' || result === 'skipped' || result === 'unsupported') {
+        vscode.window.showWarningMessage(
+          'Claude Code LaTeX could not change plan approval view rendering. See the extension logs for details.');
+        return;
+      }
+      await reloadWindowAndNotify(
+        'Claude Code LaTeX plan approval view rendering ' +
+          (enabled ? 'enabled' : 'disabled') +
+          '. Reload the VS Code window to apply the change.');
+    })
+  );
+
   // Watch for Claude Code extension changes (updates). A Claude Code update
   // installs a fresh (unpatched) webview; this re-patches it.
   context.subscriptions.push(
@@ -775,7 +1021,9 @@ function activate(context) {
       const dir = findClaudeCodeExtDir();
       if (dir) {
         try {
-          const result = ensurePatched(dir, vendorDir, currentMacroPayload());
+          const macroPayload = currentMacroPayload();
+          const result = ensurePatched(dir, vendorDir, macroPayload);
+          syncPlanPreview(dir, vendorDir, macroPayload, readPlanPreviewConfig());
           if (result === 'fresh' || result === 'refreshed' || result === 'macros-updated') {
             reloadWebviewAndNotify('Claude Code LaTeX re-applied after a Claude Code update. The webview was reloaded; reload again if any math still looks unrendered.');
           } else if (result === 'unsupported') {
@@ -802,6 +1050,14 @@ module.exports = { activate, deactivate };
 module.exports._test = {
   findClaudeCodeExtDir,
   isPatched,
+  isPlanPatched,
+  ensurePlanPatched,
+  syncPlanPreview,
+  removePlanPatch,
+  readPlanAssets,
+  readPlanPreviewConfig,
+  planBackupIsPristine,
+  writeFileAtomic,
   getPatchedVersion,
   canRestoreOriginals,
   applyPatch,

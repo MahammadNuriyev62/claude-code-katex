@@ -7,8 +7,9 @@ against a hand-maintained remote VS Code.
 | Level | What it exercises | Browser | Network | Claude auth |
 |------:|-------------------|:-------:|:-------:|:-----------:|
 | **1** | `jest` unit tests — patch lifecycle, injection regex, macro payload + macro ingestion | – | – | – |
-| **2** | The math pipeline through Claude Code's real react-markdown → remark-math → rehype-katex chain — the torture harness plus a second page carrying a user macro payload | ✓ | ✓ (CDN) | – |
+| **2** | The math pipeline through Claude Code's real react-markdown → remark-math → rehype-katex chain — the torture harness, a second page carrying a user macro payload, and a third driving the plan approval view through real marked | ✓ | ✓ (CDN) | – |
 | **macros** | User macros resolving and rendering **inside** the real Claude Code webview in code-server | ✓ | ✓ | – |
+| **plan-toggle** | The default-off plan setting applying and restoring the host patch across real code-server window reloads | ✓ | ✓ | – |
 | **3** | The **real** extension patching the **real** Claude Code in code-server, asserting KaTeX renders in the live webview | ✓ | ✓ | ✓ |
 
 ## Build
@@ -24,6 +25,8 @@ docker build -t claude-code-katex-tests .
 docker run --rm claude-code-katex-tests           # == "ci"
 docker run --rm claude-code-katex-tests 1         # jest only
 docker run --rm claude-code-katex-tests 2         # rendering harness only
+docker run --rm claude-code-katex-tests plan-toggle # plan opt-in lifecycle
+docker run --rm claude-code-katex-tests plan-toggle # plan opt-in lifecycle
 
 # Level 3 — real end-to-end. Needs Claude auth (see below).
 docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN="$(claude setup-token)" \
@@ -113,6 +116,14 @@ consume it like normal usage); it never becomes a metered charge.
   If a future Claude Code reshapes this, `smoke` (which only checks the on-disk
   patch) still passes while `3` can't drive the chat — re-probe the webview DOM
   and update these selectors.
+- **The plan approval integration (issue #17) is off by default.** `smoke`
+  asserts ordinary activation leaves Claude Code's host `extension.js`
+  untouched and creates no host backup. The separate `plan-toggle` level edits
+  the real code-server setting, reloads the VS Code window, checks the host
+  patch and pristine backup appear when enabled, then checks disabling and
+  reloading restores the host byte-for-byte. Unit tests cover the interactive
+  reload prompt raised by a live setting change.
+
 - **`smoke` also covers user macros.** It merges a `claudeCodeKatex.macros`
   entry into code-server's user settings before launch and asserts the macro
   payload block and its hash reached the patched webview bundle — the whole
