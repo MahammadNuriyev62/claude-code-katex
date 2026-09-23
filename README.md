@@ -11,6 +11,10 @@ Renders inline math (`$...$`, `\(...\)`) and display math (`$$...$$`, `\[...\]`)
 
 **Copy as LaTeX:** select any rendered equation and copy it — the clipboard gets the original LaTeX source (inline as `$...$`, display as `$$...$$`), ready to paste into a `.tex` file, Overleaf, or another chat.
 
+**Reveal the source:** hover a display equation and use the **TeX** button on
+its right edge to switch between the rendered formula and its `$$...$$`
+source. The control is keyboard accessible; inline math stays uncluttered.
+
 ## Old Demo
 
 ![Claude Code LaTeX demo — a Claude Code chat response shown as raw LaTeX, then rendered as math after the extension is installed](https://raw.githubusercontent.com/MahammadNuriyev62/claude-code-katex/main/claude-code-latex-demo.gif)

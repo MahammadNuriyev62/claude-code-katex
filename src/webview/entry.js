@@ -284,6 +284,103 @@ const USER_MACROS = (function loadUserMacros() {
   }
 })();
 
+function hasClass(node, name) {
+  if (!node || node.type !== 'element' || !node.properties) return false;
+  const classes = node.properties.className;
+  return Array.isArray(classes) ? classes.includes(name) : classes === name;
+}
+
+function nodeText(node) {
+  if (!node) return '';
+  if (node.type === 'text') return node.value || '';
+  return Array.isArray(node.children) ? node.children.map(nodeText).join('') : '';
+}
+
+function findTexAnnotation(node) {
+  if (!node) return null;
+  if (node.type === 'element' && node.tagName === 'annotation' &&
+      node.properties && node.properties.encoding === 'application/x-tex') {
+    return nodeText(node);
+  }
+  if (!Array.isArray(node.children)) return null;
+  for (const child of node.children) {
+    const tex = findTexAnnotation(child);
+    if (tex !== null) return tex;
+  }
+  return null;
+}
+
+function sourceToggle(displayMath, tex) {
+  return {
+    type: 'element',
+    tagName: 'span',
+    properties: { className: ['katex-source'] },
+    children: [
+      {
+        type: 'element',
+        tagName: 'button',
+        properties: {
+          type: 'button',
+          className: ['katex-source-toggle'],
+          ariaLabel: 'Show LaTeX source',
+          ariaExpanded: 'false',
+          title: 'Show LaTeX source',
+        },
+        children: [],
+      },
+      displayMath,
+      {
+        type: 'element',
+        tagName: 'span',
+        properties: { className: ['katex-source-code'], hidden: true },
+        children: [{
+          type: 'element',
+          tagName: 'code',
+          properties: {},
+          children: [{ type: 'text', value: '$$\n' + tex + '\n$$' }],
+        }],
+      },
+    ],
+  };
+}
+
+function decorateDisplayMath(node) {
+  if (!node || !Array.isArray(node.children)) return;
+  for (let i = 0; i < node.children.length; i++) {
+    const child = node.children[i];
+    if (hasClass(child, 'katex-display')) {
+      const tex = findTexAnnotation(child);
+      if (tex !== null) node.children[i] = sourceToggle(child, tex);
+    } else {
+      decorateDisplayMath(child);
+    }
+  }
+}
+
+function installSourceToggle() {
+  if (window.__KATEX_SOURCE_TOGGLE_INSTALLED || typeof document === 'undefined') return;
+  window.__KATEX_SOURCE_TOGGLE_INSTALLED = true;
+  document.addEventListener('click', (event) => {
+    const target = event.target;
+    const button = target && typeof target.closest === 'function'
+      ? target.closest('.katex-source-toggle')
+      : null;
+    if (!button) return;
+
+    const root = button.closest('.katex-source');
+    const displayMath = root && root.querySelector('.katex-display');
+    const source = root && root.querySelector('.katex-source-code');
+    if (!displayMath || !source) return;
+
+    const reveal = button.getAttribute('aria-expanded') !== 'true';
+    displayMath.hidden = reveal;
+    source.hidden = !reveal;
+    button.setAttribute('aria-expanded', String(reveal));
+    button.setAttribute('aria-label', reveal ? 'Show rendered math' : 'Show LaTeX source');
+    button.title = reveal ? 'Show rendered math' : 'Show LaTeX source';
+  });
+}
+
 // \htmlId needs `trust`, granted for that single command only, and its
 // htmlExtension strict-mode warning is silenced (it would log per formula).
 // The macros object is rebuilt per plugin instantiation: KaTeX mutates it when
@@ -292,7 +389,8 @@ const USER_MACROS = (function loadUserMacros() {
 // a user macro named \ref must not break issue #14's resolution.
 const realRehypeKatex = rehypeKatex && rehypeKatex.default ? rehypeKatex.default : rehypeKatex;
 function rehypeKatexWithCrossrefs(options) {
-  return realRehypeKatex.call(this, {
+  const processor = this;
+  const renderKatex = realRehypeKatex.call(processor, {
     ...options,
     macros: {
       ...USER_MACROS,
@@ -302,8 +400,20 @@ function rehypeKatexWithCrossrefs(options) {
     trust: (context) => context.command === '\\htmlId',
     strict: (errorCode) => (errorCode === 'htmlExtension' ? 'ignore' : 'warn'),
   });
+  return function renderKatexWithSource(tree, file) {
+    const result = renderKatex.call(processor, tree, file);
+    if (result && typeof result.then === 'function') {
+      return result.then((output) => {
+        decorateDisplayMath(output || tree);
+        return output;
+      });
+    }
+    decorateDisplayMath(result || tree);
+    return result;
+  };
 }
 
+installSourceToggle();
 window.__remarkMath = remarkMath && remarkMath.default ? remarkMath.default : remarkMath;
 window.__rehypeKatex = rehypeKatexWithCrossrefs;
 window.__remarkBracketMath = remarkBracketMath;

@@ -135,7 +135,7 @@ smoke() {
 # like level3, since the webview frame only attaches once the view is focused,
 # which is why it is its own level and not part of the CI-gating smoke.
 macros_in_webview() {
-  log "Macro probe — user macros resolve inside the real Claude Code webview (no auth needed)"
+  log "Webview probe — macros and source reveal work in real Claude Code (no auth needed)"
   configure_macros
   start_code_server
   trap 'kill "$CS_PID" 2>/dev/null || true' RETURN

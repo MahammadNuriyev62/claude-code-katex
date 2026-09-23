@@ -1,14 +1,13 @@
-// Auth-free in-webview macro probe.
+// Auth-free in-webview feature probe.
 //
 // Sits between the smoke level (which only greps the patched file on disk) and
 // Level 3 (which needs Claude auth): it attaches to the REAL Claude Code
 // webview running in code-server and asks the page itself what happened.
 //
-// That answers the question neither of the others does — did the payload the
-// extension wrote actually parse as JavaScript, and did KaTeX ingest it, in
-// the real webview rather than in a test page? Then it renders with the
-// resolved macros through the webview's own KaTeX, so the assertion is about
-// output, not about a marker being present.
+// That answers the question neither of the others does — did the code the
+// extension wrote actually run in the real webview rather than only in a test
+// page? It renders with resolved macros, then exercises the source toggle's
+// rehype decoration, packaged CSS, and delegated keyboard handler.
 //
 // No Claude auth is needed: Claude Code's webview bundle — and therefore our
 // prepended payload and ingestion — loads regardless of whether anyone is
@@ -113,8 +112,99 @@ async function findPatchedFrame(page, attempts = 45) {
   if (!render.mathbf) await die('\\vv{x} did not expand to \\mathbf — the file macro is not in effect.');
   if (!render.mathbb) await die('\\RR did not expand to \\mathbb — the file macro is not in effect.');
 
+  // 3. Does the source toggle work inside the real Claude Code webview?
+  //    Drive the shipping rehype plugin against the same HAST shape produced
+  //    by remark-rehype, then exercise its packaged CSS and delegated handler.
+  const sourceSetup = await frame.evaluate(async () => {
+    const tex = '\\int_0^1 x^2\\,dx';
+    const tree = {
+      type: 'root',
+      children: [{
+        type: 'element',
+        tagName: 'code',
+        properties: { className: ['language-math', 'math-display'] },
+        children: [{ type: 'text', value: tex }],
+      }],
+    };
+    const transform = window.__rehypeKatex.call({}, {});
+    const transformed = transform(tree, {});
+    if (transformed && typeof transformed.then === 'function') await transformed;
+
+    const classes = (node) => {
+      const value = node && node.properties && node.properties.className;
+      return Array.isArray(value) ? value : value ? [value] : [];
+    };
+    const find = (node, name) => {
+      if (classes(node).includes(name)) return node;
+      for (const child of (node && node.children) || []) {
+        const found = find(child, name);
+        if (found) return found;
+      }
+      return null;
+    };
+    const text = (node) => node && node.type === 'text'
+      ? node.value || ''
+      : ((node && node.children) || []).map(text).join('');
+
+    const wrapper = find(tree, 'katex-source');
+    const buttonNode = find(wrapper, 'katex-source-toggle');
+    const sourceNode = find(wrapper, 'katex-source-code');
+    const displayNode = find(wrapper, 'katex-display');
+    if (!wrapper || !buttonNode || !sourceNode || !displayNode) {
+      return { decorated: false };
+    }
+
+    const host = document.createElement('span');
+    host.id = 'katex-source-probe';
+    host.className = 'katex-source';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'katex-source-toggle';
+    button.setAttribute('aria-label', buttonNode.properties.ariaLabel);
+    button.setAttribute('aria-expanded', buttonNode.properties.ariaExpanded);
+    const display = document.createElement('span');
+    display.className = 'katex-display';
+    display.textContent = 'rendered equation';
+    const source = document.createElement('span');
+    source.className = 'katex-source-code';
+    source.hidden = true;
+    source.textContent = text(sourceNode);
+    host.append(button, display, source);
+    document.body.appendChild(host);
+    return { decorated: true, source: source.textContent };
+  });
+  if (!sourceSetup.decorated) await die('the shipping rehype plugin did not add a display-math source control.');
+  if (sourceSetup.source !== '$$\n\\int_0^1 x^2\\,dx\n$$') {
+    await die(`the live source control carried unexpected text: ${JSON.stringify(sourceSetup.source)}.`);
+  }
+
+  const sourceButton = frame.locator('#katex-source-probe .katex-source-toggle');
+  const initialOpacity = await sourceButton.evaluate((el) => getComputedStyle(el).opacity);
+  await sourceButton.hover();
+  await sleep(150);
+  const hoverOpacity = await sourceButton.evaluate((el) => getComputedStyle(el).opacity);
+  await sourceButton.press('Enter');
+  const sourceState = await sourceButton.evaluate((el) => {
+    const root = el.closest('.katex-source');
+    return {
+      expanded: el.getAttribute('aria-expanded'),
+      label: el.getAttribute('aria-label'),
+      displayHidden: root.querySelector('.katex-display').hidden,
+      sourceHidden: root.querySelector('.katex-source-code').hidden,
+    };
+  });
+  if (initialOpacity !== '0' || hoverOpacity !== '1') {
+    await die(`the live source button did not reveal on hover (opacity ${initialOpacity} -> ${hoverOpacity}).`);
+  }
+  if (sourceState.expanded !== 'true' || sourceState.label !== 'Show rendered math' ||
+      !sourceState.displayHidden || sourceState.sourceHidden) {
+    await die(`the live source button did not toggle correctly: ${JSON.stringify(sourceState)}.`);
+  }
+  await frame.locator('#katex-source-probe').screenshot({ path: `${OUT_DIR}/source-toggle.png` });
+  console.log('[macros] ✅ source reveal works inside the real Claude Code webview');
+
   await page.screenshot({ path: `${OUT_DIR}/webview-macros.png`, fullPage: true });
-  console.log('\n[macros] ✅ user macros resolve and render inside the real Claude Code webview (no auth used)');
+  console.log('\n[macros] ✅ macros and source reveal work inside the real Claude Code webview (no auth used)');
   await browser.close();
   process.exit(0);
 })().catch((e) => { console.error('[macros]', e); process.exit(1); });

@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Display equations can reveal their LaTeX source**
+  ([#18](https://github.com/MahammadNuriyev62/claude-code-katex/issues/18),
+  suggested by [@cryptism](https://github.com/cryptism)). Hover a display
+  equation and use the **TeX** button at its right edge to replace the rendered
+  formula with selectable, `$$`-wrapped source; use the eye button to restore
+  rendering. The control is keyboard accessible, works on streamed equations,
+  and is intentionally omitted from inline math.
+
 ## [2.1.0] - 2026-07-31
 
 ### Added

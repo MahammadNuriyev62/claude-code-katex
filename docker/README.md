@@ -8,7 +8,7 @@ against a hand-maintained remote VS Code.
 |------:|-------------------|:-------:|:-------:|:-----------:|
 | **1** | `jest` unit tests — patch lifecycle, injection regex, macro payload + macro ingestion | – | – | – |
 | **2** | The math pipeline through Claude Code's real react-markdown → remark-math → rehype-katex chain — the torture harness plus a second page carrying a user macro payload | ✓ | ✓ (CDN) | – |
-| **macros** | User macros resolving and rendering **inside** the real Claude Code webview in code-server | ✓ | ✓ | – |
+| **macros** | User macros and the source-reveal control running **inside** the real Claude Code webview in code-server | ✓ | ✓ | – |
 | **3** | The **real** extension patching the **real** Claude Code in code-server, asserting KaTeX renders in the live webview | ✓ | ✓ | ✓ |
 
 ## Build
@@ -120,8 +120,10 @@ consume it like normal usage); it never becomes a metered charge.
 - **`macros` goes one step further, still without auth.** `docker/
   webview-macros.js` attaches to the real Claude Code webview, reads
   `__KATEX_MACRO_REPORT` from the page, and renders with the resolved macros
-  through the webview's own KaTeX. No Claude session is needed because the
-  webview bundle — and our ingestion — loads whether or not anyone is signed
-  in. It finds the frame by *our* globals (`__KATEX_V2_LOADED`), never by a
-  Claude Code selector, but it does need the view-focus command, which is why
-  it is a separate level: `smoke` must stay robust enough to gate CI.
+  through the webview's own KaTeX. It also runs the shipping rehype plugin on
+  display math and verifies the packaged source-toggle CSS and keyboard handler
+  inside that live frame. No Claude session is needed because the webview
+  bundle loads whether or not anyone is signed in. It finds the frame by *our*
+  globals (`__KATEX_V2_LOADED`), never by a Claude Code selector, but it does
+  need the view-focus command, which is why it is a separate level: `smoke`
+  must stay robust enough to gate CI.

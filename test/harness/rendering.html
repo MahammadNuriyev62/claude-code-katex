@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <title>Claude Code LaTeX — rendering torture harness</title>
 <link rel="stylesheet" href="/vendor/katex.min.css">
+<link rel="stylesheet" href="/assets/source-toggle.css">
 <script src="/vendor/katex.min.js"></script>
 <script src="/vendor/copy-tex.min.js"></script>
 <script src="/vendor/remark-math-bundle.js"></script>
@@ -377,6 +378,34 @@ As equation \ref{eq:twelve} shows.`,
 $$a^2 + b^2 = c^2 \tag{9} \label{eq:fwd}$$`,
     el => [err(el) === 0 && el.textContent.includes('We will show (9) below'),
            err(el) + ' err, text=' + JSON.stringify((el.textContent.match(/We will[^.]*\./) || ['?'])[0])]],
+
+  // ===== Issue #18 — reveal the source behind rendered display math =====
+  ['SOURCE 73 — display math toggles between rendering and exact LaTeX source', R`$$\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}$$`,
+    el => {
+      const button = el.querySelector('.katex-source-toggle');
+      const displayMath = el.querySelector('.katex-display');
+      const source = el.querySelector('.katex-source-code');
+      if (!button || !displayMath || !source) {
+        return [false, 'button=' + !!button + ', display=' + !!displayMath + ', source=' + !!source];
+      }
+      const initial = button.tagName === 'BUTTON' && button.getAttribute('aria-expanded') === 'false' &&
+        button.getAttribute('aria-label') === 'Show LaTeX source' && !displayMath.hidden && source.hidden;
+      button.click();
+      const revealed = button.getAttribute('aria-expanded') === 'true' &&
+        button.getAttribute('aria-label') === 'Show rendered math' && displayMath.hidden && !source.hidden &&
+        source.textContent === R`$$
+\int_0^\infty e^{-x^2}\,dx = \frac{\sqrt{\pi}}{2}
+$$`;
+      button.click();
+      const restored = button.getAttribute('aria-expanded') === 'false' && !displayMath.hidden && source.hidden;
+      return [initial && revealed && restored,
+              'initial=' + initial + ', revealed=' + revealed + ', restored=' + restored +
+              ', source=' + JSON.stringify(source.textContent)];
+    }],
+
+  ['SOURCE 74 — inline math does not get a source control', R`Keep $x^2 + y^2$ inline.`,
+    el => [kx(el) === 1 && el.querySelectorAll('.katex-source-toggle').length === 0,
+           kx(el) + ' katex, ' + el.querySelectorAll('.katex-source-toggle').length + ' controls']],
 ];
 
 const out = document.getElementById('out');
@@ -390,6 +419,20 @@ for (const [name, md] of cases) {
   createRoot(r).render(React.createElement(Markdown, { remarkPlugins, rehypePlugins }, md));
 }
 
+const lateWrap = document.createElement('div');
+lateWrap.className = 'case';
+lateWrap.innerHTML = '<div class="label">SOURCE 75 — a later streamed render gets the source control</div>';
+const lateRender = document.createElement('div'); lateRender.className = 'render';
+lateWrap.appendChild(lateRender);
+out.appendChild(lateWrap);
+setTimeout(() => {
+  createRoot(lateRender).render(React.createElement(
+    Markdown,
+    { remarkPlugins, rehypePlugins },
+    R`$$\sum_{k=1}^{n} k = \frac{n(n+1)}{2}$$`
+  ));
+}, 400);
+
 setTimeout(() => {
   const wraps = out.querySelectorAll('.case');
   const results = [];
@@ -401,6 +444,18 @@ setTimeout(() => {
     wrap.querySelector('.label').textContent = (ok ? 'PASS  ' : 'FAIL  ') + name + '  —  ' + detail;
     results.push({ name, ok, detail });
   });
+  {
+    const button = lateRender.querySelector('.katex-source-toggle');
+    const ok = !!button && button.getAttribute('aria-label') === 'Show LaTeX source';
+    lateWrap.classList.add(ok ? 'pass' : 'fail');
+    lateWrap.querySelector('.label').textContent =
+      (ok ? 'PASS  ' : 'FAIL  ') + 'SOURCE 75 — a later streamed render gets the source control';
+    results.push({
+      name: 'SOURCE 75 — a later streamed render gets the source control',
+      ok,
+      detail: 'button=' + !!button,
+    });
+  }
   const passed = results.filter(r => r.ok).length;
   const s = document.getElementById('summary');
   s.textContent = passed + ' / ' + results.length + ' passed';

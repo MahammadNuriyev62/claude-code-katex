@@ -26,6 +26,10 @@ instead of being repaired in the DOM afterward.
 - If the injection point is not found — a future Claude Code reshaped its
   bundle — `applyPatch` returns `false`, touches nothing, and the extension
   shows an "update / report an issue" notice. There is no fallback renderer.
+- Display-math HAST nodes are wrapped after `rehype-katex` renders them with a
+  source toggle and the `application/x-tex` annotation exposed as selectable
+  `$$`-wrapped code (issue #18). One delegated click handler covers streamed
+  equations; inline math is not decorated.
 
 - When the user has configured macros (issue #15), a delimited block is emitted
   between the KaTeX core and the math bundle, setting
@@ -177,10 +181,11 @@ code-server, asserting KaTeX renders in the live webview.
   reached it). Gates CI without any secret.
 - `docker run --rm img macros` — token-free too, and stronger: attaches to the
   real Claude Code webview, reads `__KATEX_MACRO_REPORT` from the page, and
-  renders with the resolved macros through the webview's own KaTeX. The webview
-  bundle loads whether or not anyone is signed in, so no auth is needed. Kept
-  out of `smoke` because it depends on the view-focus command and `smoke` must
-  stay CI-robust.
+  renders with the resolved macros through the webview's own KaTeX. It also
+  drives the source toggle's rehype decoration, packaged CSS and keyboard
+  handler in that live frame. The webview bundle loads whether or not anyone
+  is signed in, so no auth is needed. Kept out of `smoke` because it depends on
+  the view-focus command and `smoke` must stay CI-robust.
 - `docker run --rm -e CLAUDE_CODE_OAUTH_TOKEN=... img 3` — adds the live render.
   `docker/e2e.js` opens Claude Code, sends a prompt that asks Claude to echo a
   **fixed** block of LaTeX (so it tests the renderer, not the model), asserts

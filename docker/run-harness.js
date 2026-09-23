@@ -84,6 +84,42 @@ async function trustedCopyCheck(page) {
   }
 }
 
+// A native button must toggle by keyboard, not only through synthetic clicks.
+// Returns null only when a page renders no display math.
+async function trustedSourceToggleCheck(page) {
+  const button = page.locator('.katex-source-toggle').first();
+  if (await button.count() === 0) return null;
+
+  const initialOpacity = await button.evaluate((el) => getComputedStyle(el).opacity);
+  await button.hover();
+  await page.waitForTimeout(150);
+  const hoverOpacity = await button.evaluate((el) => getComputedStyle(el).opacity);
+  await button.focus();
+  await page.keyboard.press('Enter');
+  const revealed = await button.evaluate((el) => {
+    const root = el.closest('.katex-source');
+    const source = root && root.querySelector('.katex-source-code');
+    const rendered = root && root.querySelector('.katex-display');
+    return {
+      expanded: el.getAttribute('aria-expanded'),
+      label: el.getAttribute('aria-label'),
+      sourceHidden: source ? source.hidden : null,
+      renderedHidden: rendered ? rendered.hidden : null,
+    };
+  });
+  await page.keyboard.press('Enter');
+  const restored = await button.getAttribute('aria-expanded');
+
+  return {
+    name: 'SOURCE — hover reveals the button and trusted Enter toggles the source',
+    ok: initialOpacity === '0' && hoverOpacity === '1' &&
+      revealed.expanded === 'true' && revealed.label === 'Show rendered math' &&
+      revealed.sourceHidden === false && revealed.renderedHidden === true && restored === 'false',
+    detail: 'opacity=' + initialOpacity + '->' + hoverOpacity +
+      ' revealed=' + JSON.stringify(revealed) + ' restored=' + restored,
+  };
+}
+
 (async () => {
   const browser = await chromium.launch({
     headless: true,
@@ -103,6 +139,8 @@ async function trustedCopyCheck(page) {
       await page.goto(url, { waitUntil: 'domcontentloaded' });
       await page.waitForFunction('window.__DONE === true', { timeout: DONE_TIMEOUT_MS });
       results = await page.evaluate(() => window.__RESULTS);
+      const sourceToggle = await trustedSourceToggleCheck(page);
+      if (sourceToggle) results.push(sourceToggle);
       const trusted = await trustedCopyCheck(page);
       if (trusted) results.push(trusted);
     } catch (e) {

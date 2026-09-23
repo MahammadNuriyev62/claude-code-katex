@@ -422,6 +422,7 @@ function applyPatch(extDir, vendorDir, macroPayload) {
 
   // Patch index.css — KaTeX styles
   const katexCss = fs.readFileSync(path.join(vendorDir, 'katex.min.css'), 'utf8');
+  const sourceToggleCss = fs.readFileSync(path.join(__dirname, 'assets', 'source-toggle.css'), 'utf8');
   const cssPatch = `
 ${PATCH_CSS_MARKER}
 ${katexCss}
@@ -437,6 +438,7 @@ ${katexCss}
 .katex {
   font-size: 1.1em;
 }
+${sourceToggleCss.trimEnd()}
 /* === End KaTeX CSS Patch === */`;
   fs.appendFileSync(cssPath, cssPatch);
 
