@@ -9,6 +9,7 @@ const mockShowErrorMessage = jest.fn();
 const mockExecuteCommand = jest.fn();
 const mockRegisterCommand = jest.fn().mockReturnValue({ dispose: jest.fn() });
 const mockOnDidChange = jest.fn().mockReturnValue({ dispose: jest.fn() });
+const mockOnDidChangeConfiguration = jest.fn().mockReturnValue({ dispose: jest.fn() });
 const mockGetExtension = jest.fn();
 const mockOpenExternal = jest.fn();
 const mockStatusBarItem = {
@@ -35,6 +36,7 @@ jest.mock('vscode', () => ({
   },
   workspace: {
     getConfiguration: mockGetConfiguration,
+    onDidChangeConfiguration: mockOnDidChangeConfiguration,
     workspaceFolders: undefined,
   },
   env: { openExternal: mockOpenExternal },
@@ -70,6 +72,13 @@ const FIXTURE_JS =
   'var tree=R.default.createElement(Md,{remarkPlugins:[gfm],components:{a:1}},src);\n' +
   'console.log("hello");';
 const FIXTURE_CSS = '/* original css */ body { margin: 0; }';
+const PLAN_HOST_SOURCE = [
+  'var wr={parse:function(s){return s}};',
+  'function Ta(){return "n0nce"}',
+  'var U_r=`<html><body><div id="content"></div></body></html>`;',
+  'function $_r(e){let t=wr.parse(e);return typeof t==="string"?t:""}',
+  'function F_r(){let e=Ta();return U_r.replaceAll("{{NONCE}}",e)}',
+].join('\n');
 // A bundle whose react-markdown call the patch can no longer locate.
 const FIXTURE_NO_INJECT =
   '// claude code with a reshaped bundle\nconsole.log("no injection point here");';
@@ -84,6 +93,7 @@ function setupFakeClaudeCodeExt(jsContent) {
   fs.mkdirSync(webviewDir, { recursive: true });
   fs.writeFileSync(path.join(webviewDir, 'index.js'), jsContent || FIXTURE_JS);
   fs.writeFileSync(path.join(webviewDir, 'index.css'), FIXTURE_CSS);
+  fs.writeFileSync(path.join(extDir, 'extension.js'), PLAN_HOST_SOURCE);
   return extDir;
 }
 
@@ -117,6 +127,7 @@ function makeStalePatch(fakeVersion) {
 
 const readJs = () => fs.readFileSync(path.join(extDir, 'webview', 'index.js'), 'utf8');
 const readCss = () => fs.readFileSync(path.join(extDir, 'webview', 'index.css'), 'utf8');
+const readHost = () => fs.readFileSync(path.join(extDir, 'extension.js'), 'utf8');
 
 beforeEach(() => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'katex-test-'));
@@ -605,16 +616,63 @@ describe('activate', () => {
     expect(mockStatusBarItem.text).toMatch(/LaTeX/);
   });
 
-  test('pushes 6 disposables (4 commands + status bar + onDidChange)', () => {
+  test('pushes 7 disposables (4 commands + status bar + extension/config watchers)', () => {
     mockGetExtension.mockReturnValue({ extensionPath: extDir });
     activate(context);
-    expect(context.subscriptions.length).toBe(6);
+    expect(context.subscriptions.length).toBe(7);
   });
 
   test('registers an onDidChange watcher', () => {
     mockGetExtension.mockReturnValue({ extensionPath: extDir });
     activate(context);
     expect(mockOnDidChange).toHaveBeenCalled();
+  });
+
+  test('leaves the plan host untouched by default', () => {
+    mockGetExtension.mockReturnValue({ extensionPath: extDir });
+    activate(context);
+    expect(readHost()).toBe(PLAN_HOST_SOURCE);
+    expect(fs.existsSync(path.join(extDir, 'extension.js.katex-bak'))).toBe(false);
+  });
+
+  test('enabling plan rendering applies the host patch and offers Reload Window', async () => {
+    mockGetExtension.mockReturnValue({ extensionPath: extDir });
+    activate(context);
+    const changed = mockOnDidChangeConfiguration.mock.calls[0][0];
+    mockShowInformationMessage.mockClear();
+    mockShowInformationMessage.mockResolvedValueOnce('Reload Window');
+    setMacroConfig({ renderPlanPreview: true });
+
+    await changed({ affectsConfiguration: (name) => name === 'claudeCodeKatex.renderPlanPreview' });
+    await Promise.resolve();
+
+    expect(readHost()).toContain('KaTeX plan-preview patch');
+    expect(mockShowInformationMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/enabled.*reload/i),
+      'Reload Window',
+    );
+    expect(mockExecuteCommand).toHaveBeenCalledWith('workbench.action.reloadWindow');
+  });
+
+  test('disabling plan rendering restores the host and offers Reload Window', async () => {
+    mockGetExtension.mockReturnValue({ extensionPath: extDir });
+    setMacroConfig({ renderPlanPreview: true });
+    activate(context);
+    expect(readHost()).toContain('KaTeX plan-preview patch');
+    const changed = mockOnDidChangeConfiguration.mock.calls[0][0];
+    mockShowInformationMessage.mockClear();
+    mockShowInformationMessage.mockResolvedValueOnce('Reload Window');
+    setMacroConfig({ renderPlanPreview: false });
+
+    await changed({ affectsConfiguration: (name) => name === 'claudeCodeKatex.renderPlanPreview' });
+    await Promise.resolve();
+
+    expect(readHost()).toBe(PLAN_HOST_SOURCE);
+    expect(mockShowInformationMessage).toHaveBeenCalledWith(
+      expect.stringMatching(/disabled.*reload/i),
+      'Reload Window',
+    );
+    expect(mockExecuteCommand).toHaveBeenCalledWith('workbench.action.reloadWindow');
   });
 
   test('handles Claude Code not being installed without throwing', () => {

@@ -181,6 +181,34 @@ function readRoot(frame) {
   if (!xref.mathRef) await die('$\\eqref{eq:spectral}$ did not render as the math formula "(4)".');
   console.log('[L3] ✅ \\label anchor present, \\eqref resolved to "(4)" in prose and math — xref PASS');
 
+  // Issue #18: exercise an equation from the actual reply through React's
+  // Markdown components, not a synthetic HAST/DOM probe. Verify both mouse
+  // reveal and keyboard restoration, and the exact selectable source.
+  const equation = cc.locator('#root .katex-source').first();
+  const sourceButton = equation.locator('.katex-source-toggle');
+  if (await sourceButton.count() !== 1) await die('the live reply has no source-reveal button.');
+  const originalTex = await equation.locator('annotation[encoding="application/x-tex"]').textContent();
+  await equation.hover();
+  await sourceButton.click();
+  const revealed = await equation.evaluate((el) => ({
+    expanded: el.querySelector('button').getAttribute('aria-expanded'),
+    displayHidden: el.querySelector('.katex-display').hidden,
+    sourceHidden: el.querySelector('.katex-source-code').hidden,
+    source: el.querySelector('.katex-source-code').textContent,
+  }));
+  if (revealed.expanded !== 'true' || !revealed.displayHidden || revealed.sourceHidden ||
+      revealed.source !== '$$\n' + originalTex + '\n$$') {
+    await die(`the live reply source toggle failed: ${JSON.stringify(revealed)}`);
+  }
+  await equation.screenshot({ path: `${OUT_DIR}/e2e-source-revealed.png` });
+  await sourceButton.press('Enter');
+  if (await sourceButton.getAttribute('aria-expanded') !== 'false' ||
+      !(await equation.locator('.katex-display').isVisible()) ||
+      await equation.locator('.katex-source-code').isVisible()) {
+    await die('Enter did not restore the live equation rendering.');
+  }
+  console.log('[L3] ✅ actual reply reveals exact LaTeX on click and restores with Enter — source PASS');
+
   // copy-tex in the LIVE webview: select the first rendered display formula,
   // press a real Ctrl+C, and assert the copy event's payload is the $$-wrapped
   // LaTeX source (not the rendered spans' text). The capture listener runs
@@ -231,6 +259,9 @@ function readRoot(frame) {
   }
   if (!/\$\$[^$]*\\sum_\{k=1\}\^n[^$]*\$\$/.test(copied)) {
     await die(`display math is not $$-wrapped LaTeX in the copy: ${JSON.stringify(copied)}`);
+  }
+  if (copied.split(originalTex).length !== 2) {
+    await die('display math was duplicated in the clipboard by a hidden source block.');
   }
 
   // Copying macro-using math must yield the macro CALL, not its expansion —

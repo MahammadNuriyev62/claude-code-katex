@@ -6,12 +6,16 @@
 // PASS/FAIL that the page records on window.__RESULTS. Exits non-zero if any
 // case fails, so it gates CI. No Claude Code and no auth are involved here.
 //
-// Two pages are driven:
+// Three pages are driven:
 //   test/harness/rendering.html — the core math suite. Deliberately loads NO
 //                                 user macros, so it also proves the macro
 //                                 feature changes nothing when unconfigured.
 //   test/harness/macros.html    — the same bundle with a user macro payload set
 //                                 before load, the way the patch bakes it in.
+//   test/harness/plan-preview.html
+//                               — the separate plan approval renderer: real
+//                                 marked -> plan host runtime -> Claude Code's
+//                                 sanitizer -> injected panel renderer.
 //
 // On top of the in-page cases it runs one trusted-path copy-tex check: a real
 // keyboard Ctrl+C over selected rendered math (the in-page COPYTEX cases use a
@@ -27,7 +31,11 @@ const urls = (() => {
   if (process.env.HARNESS_URLS) return process.env.HARNESS_URLS.split(',').map((s) => s.trim()).filter(Boolean);
   const base = (process.env.HARNESS_URL || 'http://127.0.0.1:8088/test/harness/rendering.html')
     .replace(/\/test\/harness\/[^/]*$/, '');
-  return [`${base}/test/harness/rendering.html`, `${base}/test/harness/macros.html`];
+  return [
+    `${base}/test/harness/rendering.html`,
+    `${base}/test/harness/macros.html`,
+    `${base}/test/harness/plan-preview.html`,
+  ];
 })();
 
 // Formulas the trusted-copy check looks for, in order. The first one present on
@@ -72,7 +80,7 @@ async function trustedCopyCheck(page) {
     const t = (c.text || '').trim();
     return {
       name: `TRUSTED — real Ctrl+C over selected display math copies $$-wrapped LaTeX (${needle})`,
-      ok: c.trusted && t.startsWith('$$') && t.endsWith('$$') && t.includes(needle),
+      ok: c.trusted && t.startsWith('$$') && t.endsWith('$$') && t.split(needle).length === 2,
       detail: 'trusted=' + c.trusted + ' text=' + JSON.stringify(c.text),
     };
   } catch {

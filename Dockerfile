@@ -32,7 +32,8 @@ RUN curl -fsSL https://code-server.dev/install.sh | sh
 # The official Claude Code extension, from Open VSX. On arm64/amd64 this selects
 # the matching linux build (which bundles its own `claude` binary — no separate
 # CLI install needed). Baked into the image so the container starts ready to patch.
-RUN code-server --install-extension anthropic.claude-code
+ARG CLAUDE_CODE_VERSION
+RUN code-server --install-extension "anthropic.claude-code${CLAUDE_CODE_VERSION:+@${CLAUDE_CODE_VERSION}}"
 
 # vsce, to package the extension-under-test into a .vsix for the L3 install — the
 # same artifact a real user installs.

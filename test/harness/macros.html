@@ -158,8 +158,7 @@ From \eqref{eq:emc} we conclude.`,
   ['COPYMACRO 1 — copying display math yields the verbatim macro call, not the expansion', R`$$\vv{x} \in \RR^n$$`,
     el => { const c = syntheticCopy(el);
             const t = (c.text || '').trim();
-            return [c.prevented && t.startsWith('$$') && t.endsWith('$$') &&
-                    t.includes(R`\vv{x}`) && t.includes(R`\RR`) && !t.includes('mathbf') && !t.includes('mathbb'),
+            return [c.prevented && t === R`$$\vv{x} \in \RR^n$$`,
                     'prevented=' + c.prevented + ' text=' + JSON.stringify(c.text)]; }],
 
   ['COPYMACRO 2 — copying inline macro math yields $-wrapped source', R`The set $\RR$ here.`,

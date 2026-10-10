@@ -1,15 +1,46 @@
 # Changelog
 
-## [Unreleased]
+## [2.1.3] - 2026-10-11
+
+### Fixed
+- Copying across display equations includes each equation once, including after
+  revealing and hiding its source. Hidden source controls are excluded from
+  clipboard serialization.
+- **Patching works with Claude Code 2.1.296**
+  ([#21](https://github.com/MahammadNuriyev62/claude-code-katex/issues/21)).
+  Claude Code now spreads its Markdown plugin props from a helper. The patch
+  supports that call shape, preserves existing plugins and URL handling
+  (including Windows file links), and still supports older bundles. Ambiguous
+  or unrecognized call sites are left untouched.
 
 ### Added
 - **Display equations can reveal their LaTeX source**
   ([#18](https://github.com/MahammadNuriyev62/claude-code-katex/issues/18),
   suggested by [@cryptism](https://github.com/cryptism)). Hover a display
-  equation and use the **TeX** button at its right edge to replace the rendered
-  formula with selectable, `$$`-wrapped source; use the eye button to restore
-  rendering. The control is keyboard accessible, works on streamed equations,
-  and is intentionally omitted from inline math.
+  equation and use the code icon at its right edge to replace the
+  rendered formula with selectable, `$$`-wrapped source; use the eye
+  icon to restore rendering. The small controls use the editor's muted colors
+  and show a background on hover. They are keyboard accessible, work on streamed
+  equations, and are intentionally omitted from inline math.
+
+- **Math renders in the plan approval view**
+  ([#17](https://github.com/MahammadNuriyev62/claude-code-katex/issues/17)).
+  The plan Claude opens on the side is a separate view whose Markdown Claude
+  Code renders outside the webview, so the chat patch never reached it and math
+  there stayed as raw LaTeX. It now renders, with the same fidelity as the
+  chat: `$...$`, `$$...$$`, `\(...\)` and `\[...\]`, matrices and `aligned`
+  blocks with their `\\` row separators intact, your configured macros,
+  `\label` / `\ref` / `\eqref`, and copying a selection as LaTeX source.
+  LaTeX inside code blocks and prices like `$5` are left alone, as in the chat.
+
+  The integration is experimental and off by default. Enable
+  `claudeCodeKatex.renderPlanPreview` and accept the offered window reload.
+  Reaching that view means patching one file of Claude Code beyond the webview
+  bundle. The extension backs the original up, refuses to write anything that
+  is not valid JavaScript, and writes atomically. On any Claude Code build it
+  does not recognize it changes nothing at all, and the plan view keeps working
+  exactly as before. Turning the setting off, disabling, or uninstalling
+  restores the original host file.
 
 ## [2.1.0] - 2026-07-31
 

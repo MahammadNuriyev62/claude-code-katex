@@ -11,6 +11,7 @@ playwright-report
 .git
 .gitignore
 .claude
+.worktrees
 *.log
 .DS_Store
 

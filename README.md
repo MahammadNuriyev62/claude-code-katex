@@ -11,9 +11,10 @@ Renders inline math (`$...$`, `\(...\)`) and display math (`$$...$$`, `\[...\]`)
 
 **Copy as LaTeX:** select any rendered equation and copy it — the clipboard gets the original LaTeX source (inline as `$...$`, display as `$$...$$`), ready to paste into a `.tex` file, Overleaf, or another chat.
 
-**Reveal the source:** hover a display equation and use the **TeX** button on
-its right edge to switch between the rendered formula and its `$$...$$`
-source. The control is keyboard accessible; inline math stays uncluttered.
+**Reveal the source:** hover a display equation and click the code
+icon on its right edge to show its `$$...$$` source. Click the eye
+icon to restore the rendered formula. The control is keyboard accessible;
+inline math stays uncluttered.
 
 ## Old Demo
 
@@ -103,7 +104,29 @@ The extension injects `remark-math` and `rehype-katex` into Claude Code's own Ma
 
 It patches Claude Code's webview bundle on startup and reloads the webview so rendering takes effect immediately. When Claude Code updates, the patch is automatically re-applied. If a future Claude Code build changes its internals so the patch no longer fits, the extension leaves Claude Code untouched and notifies you to update.
 
-`extension.js` of Claude Code is **never modified**. Only the webview bundle (which runs in an isolated browser context) is patched, and originals are backed up.
+### The plan approval view
+
+The plan Claude opens on the side is a second, separate view. Claude Code
+renders its Markdown outside the webview, so the chat pipeline above cannot
+reach it, and math there stayed unrendered
+([#17](https://github.com/MahammadNuriyev62/claude-code-katex/issues/17)).
+
+For that view the extension lifts the math out of the plan text before Markdown
+parsing and hands it to KaTeX afterwards, which preserves the LaTeX just as
+faithfully. `$...$`, `$$...$$`, `\(...\)`, `\[...\]`, your own macros and
+copying math as LaTeX all work there too.
+
+This integration is **experimental and off by default** because it is the one
+place the extension modifies a file of Claude Code other than the webview
+bundle. Enable `claudeCodeKatex.renderPlanPreview` in Settings and use the
+offered **Reload Window** action. Turning the setting off restores the original
+host file and prompts for another reload.
+
+The extension backs up the original first, checks the patched file is valid
+JavaScript before writing it, and writes it atomically. If anything does not
+line up, it changes nothing and the plan view keeps behaving exactly as it does
+today. Both files are also restored when you disable or uninstall the
+extension.
 
 ## Disabling / Uninstalling
 
@@ -119,6 +142,9 @@ To **re-enable**, use **Claude Code LaTeX: Enable**.
 
 ## Known Limitations
 
+- Math renders in chat and, when `claudeCodeKatex.renderPlanPreview` is enabled,
+  in the experimental plan approval integration. Other Claude Code surfaces
+  (for example the terminal) are outside what an extension can reach.
 - Rendering covers everything KaTeX supports — essentially all standard math notation. A few full-LaTeX features outside its scope (such as TikZ diagrams) are not rendered.
 - Code blocks are never affected. `$variable` inside `` `code` `` or code fences is left alone.
 - This is a temporary workaround until [anthropics/claude-code#16446](https://github.com/anthropics/claude-code/issues/16446) is resolved. Once Claude Code ships native LaTeX support, this extension can be uninstalled.

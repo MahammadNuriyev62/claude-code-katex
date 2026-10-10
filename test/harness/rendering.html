@@ -312,7 +312,7 @@ $$C = \nu_k \tag{3}$$`,
   ['COPYTEX 61 — copying display math yields $$-wrapped LaTeX', R`$$\oint_C \mathbf{F}\cdot d\mathbf{r} = 0$$`,
     el => { const c = syntheticCopy(el);
             const t = c.text.trim();
-            return [c.prevented && t.startsWith('$$') && t.endsWith('$$') && t.includes(R`\oint_C`),
+            return [c.prevented && t === R`$$\oint_C \mathbf{F}\cdot d\mathbf{r} = 0$$`,
                     'prevented=' + c.prevented + ' text=' + JSON.stringify(c.text)]; }],
 
   ['COPYTEX 62 — partial selection inside a formula expands to the whole formula', R`$a_{n+1} = \frac{a_n}{2}$`,
@@ -406,6 +406,25 @@ $$`;
   ['SOURCE 74 — inline math does not get a source control', R`Keep $x^2 + y^2$ inline.`,
     el => [kx(el) === 1 && el.querySelectorAll('.katex-source-toggle').length === 0,
            kx(el) + ' katex, ' + el.querySelectorAll('.katex-source-toggle').length + ' controls']],
+
+  ['SOURCE 76 — copying mixed math never duplicates a revealed or hidden equation', R`Before $x$.
+
+$$\int_0^1 x\,dx$$
+
+After $y$.`,
+    el => {
+      const button = el.querySelector('.katex-source-toggle');
+      const hiddenCopy = syntheticCopy(el);
+      button.click();
+      const visibleCopy = syntheticCopy(el);
+      button.click();
+      const restoredCopy = syntheticCopy(el);
+      const copies = [hiddenCopy, visibleCopy, restoredCopy];
+      const ok = copies.every((c) => c.prevented &&
+        c.text.split(R`\int_0^1 x\,dx`).length === 2 &&
+        c.text.includes('$x$') && c.text.includes('$y$'));
+      return [ok, copies.map((c) => JSON.stringify(c.text)).join(' -> ')];
+    }],
 ];
 
 const out = document.getElementById('out');

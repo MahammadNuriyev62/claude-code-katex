@@ -7,10 +7,10 @@
 }
 .katex-source-toggle {
   align-items: center;
-  background: var(--vscode-button-secondaryBackground, rgba(127, 127, 127, 0.18));
-  border: 1px solid var(--vscode-contrastBorder, transparent);
+  background: transparent;
+  border: 0;
   border-radius: 4px;
-  color: var(--vscode-foreground, currentColor);
+  color: var(--vscode-descriptionForeground, #737373);
   cursor: pointer;
   display: flex;
   height: 24px;
@@ -20,8 +20,8 @@
   position: absolute;
   right: 0.25rem;
   top: 0.25rem;
-  transition: opacity 120ms ease;
-  width: 30px;
+  transition: opacity 120ms ease, color 120ms ease, background-color 120ms ease;
+  width: 24px;
   z-index: 1;
 }
 .katex-source:hover > .katex-source-toggle,
@@ -30,33 +30,28 @@
   opacity: 1;
 }
 .katex-source-toggle:hover {
-  background: var(--vscode-button-secondaryHoverBackground, rgba(127, 127, 127, 0.28));
+  background: var(--vscode-toolbar-hoverBackground, rgba(127, 127, 127, 0.1));
+  color: var(--vscode-foreground, currentColor);
 }
 .katex-source-toggle:focus-visible {
   outline: 1px solid var(--vscode-focusBorder, currentColor);
   outline-offset: 2px;
 }
-.katex-source-toggle[aria-expanded="false"]::before {
-  content: "TeX";
-  font-family: var(--vscode-editor-font-family, monospace);
-  font-size: 10px;
-  font-weight: 600;
-}
-.katex-source-toggle[aria-expanded="true"]::before {
-  border: 1.5px solid currentColor;
-  border-radius: 70% 15%;
+.katex-source-toggle::before {
+  background-color: currentColor;
   content: "";
-  height: 10px;
-  transform: rotate(45deg);
-  width: 10px;
+  height: 16px;
+  -webkit-mask: var(--katex-source-icon) center / contain no-repeat;
+  mask: var(--katex-source-icon) center / contain no-repeat;
+  width: 16px;
 }
-.katex-source-toggle[aria-expanded="true"]::after {
-  background: currentColor;
-  border-radius: 50%;
-  content: "";
-  height: 4px;
-  position: absolute;
-  width: 4px;
+.katex-source-toggle[aria-expanded="false"] {
+  /* Code: switch to raw LaTeX. */
+  --katex-source-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m8 6-6 6 6 6m8-12 6 6-6 6m-3-15-2 18'/%3E%3C/svg%3E");
+}
+.katex-source-toggle[aria-expanded="true"] {
+  /* Eye: switch to rendered math. */
+  --katex-source-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='white' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
 }
 .katex-source-code {
   background: var(--vscode-textCodeBlock-background, rgba(127, 127, 127, 0.12));

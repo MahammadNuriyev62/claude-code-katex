@@ -2,7 +2,7 @@
   "name": "claude-code-katex",
   "displayName": "Claude Code LaTeX",
   "description": "Adds LaTeX math rendering to Claude Code chat — inline $...$, display $$...$$, and \\(...\\) / \\[...\\]",
-  "version": "2.1.0",
+  "version": "2.1.3",
   "publisher": "nuriyev",
   "license": "MIT",
   "icon": "icon.png",
@@ -73,6 +73,11 @@
             "type": "string"
           },
           "markdownDescription": "Macros in KaTeX's own form, for a handful of definitions without a file — for example `{ \"\\\\RR\": \"\\\\mathbb{R}\", \"\\\\vv\": \"\\\\mathbf{#1}\" }`.\n\nApplied after `#claudeCodeKatex.macroFiles#`, so these win on a name defined by both."
+        },
+        "claudeCodeKatex.renderPlanPreview": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Experimental: render LaTeX in Claude Code's plan approval view. This requires modifying Claude Code's host `extension.js`, with a validated backup and automatic restoration when disabled or uninstalled. Changing this setting prompts you to reload the VS Code window."
         }
       }
     }
@@ -92,7 +97,8 @@
   "homepage": "https://github.com/MahammadNuriyev62/claude-code-katex#readme",
   "jest": {
     "testPathIgnorePatterns": [
-      "/node_modules/"
+      "/node_modules/",
+      "/.worktrees/"
     ]
   },
   "devDependencies": {
