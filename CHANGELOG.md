@@ -10,6 +10,8 @@
   restoring stale backups over newer unpatched files.
 - Add token-free compatibility CI against two pinned Claude Code versions and
   the latest available release, including real-webview source-reveal checks.
+  A daily check probes the latest Claude Code against both current source and
+  the latest published extension VSIX.
 - Exclude local `.env` files from Docker test images and extension packaging.
 
 ## [2.1.3] - 2026-10-11

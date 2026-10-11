@@ -45,10 +45,16 @@ level2() {
 # already baked into the image), and launches code-server. Sets CS_PID for the
 # caller to clean up. Auth-independent.
 start_code_server() {
-  log "Packaging the extension-under-test (vsce)"
-  vsce package --no-dependencies -o /tmp/ext.vsix
+  local vsix="${EXTENSION_VSIX_PATH:-/tmp/ext.vsix}"
+  if [ -n "${EXTENSION_VSIX_PATH:-}" ]; then
+    [ -f "$vsix" ] || fail "Published extension VSIX does not exist: $vsix"
+    log "Testing the published extension VSIX: $vsix"
+  else
+    log "Packaging the extension-under-test (vsce)"
+    vsce package --no-dependencies -o "$vsix"
+  fi
   log "Installing it into code-server (Claude Code is already baked in)"
-  code-server --install-extension /tmp/ext.vsix --force
+  code-server --install-extension "$vsix" --force
 
   mkdir -p /workspace
   log "Launching code-server on :${CODE_PORT}"

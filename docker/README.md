@@ -18,7 +18,14 @@ The GitHub `Claude Code compatibility` workflow checks pinned versions 2.1.288
 and 2.1.296 plus the latest available Open VSX version on pull requests, pushes
 to main, and manual runs. Each version runs activation and real-webview probes;
 the latest also runs unit and browser regression tests. No account token is
-needed. A clean runner fetches upstream afresh; this is not a scheduled monitor.
+needed. It also runs daily at 05:17 UTC against the latest Claude Code, testing
+both the current source and the latest published GitHub release VSIX. The
+published probe still runs if a source regression fails. A clean runner fetches
+upstream afresh, and failed runs retain browser evidence. Scheduled runs require
+the workflow to be on the repository's default branch.
+
+To probe a released VSIX locally, mount it read-only and set
+`EXTENSION_VSIX_PATH=/tmp/published.vsix` when running `smoke` or `macros`.
 
 Local `.env` files are excluded from both image and VSIX builds.
 

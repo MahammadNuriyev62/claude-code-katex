@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: '17 5 * * *'
 
 permissions:
   contents: read
@@ -16,12 +18,13 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        claude: ['2.1.288', '2.1.296', 'latest']
+        claude: ${{ fromJSON(github.event_name == 'schedule' && '["latest"]' || '["2.1.288","2.1.296","latest"]') }}
     steps:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
       - name: Build against upstream
+        id: build
         env:
           CLAUDE_VERSION: ${{ matrix.claude }}
         run: |
@@ -35,6 +38,22 @@ jobs:
         run: docker run --rm katex-compatibility smoke
       - name: Real webview macros and source reveal
         run: docker run --rm -v "$PWD/test-results:/app/test-results" katex-compatibility macros
+      - name: Published extension against latest Claude Code
+        if: always() && matrix.claude == 'latest' && steps.build.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p test-results/published
+          gh release view --repo "$GITHUB_REPOSITORY" --json tagName,assets > test-results/published/release.json
+          url=$(jq -er '[.assets[] | select(.name | endswith(".vsix"))] | if length == 1 then .[0].url else error("Expected one published VSIX") end' test-results/published/release.json)
+          curl --fail --location --retry 3 "$url" -o "$RUNNER_TEMP/published.vsix"
+          for mode in smoke macros; do
+            docker run --rm \
+              -e EXTENSION_VSIX_PATH=/tmp/published.vsix \
+              -v "$RUNNER_TEMP/published.vsix:/tmp/published.vsix:ro" \
+              -v "$PWD/test-results/published:/app/test-results" \
+              katex-compatibility "$mode"
+          done
       - name: Preserve browser evidence
         if: always()
         uses: actions/upload-artifact@v7
