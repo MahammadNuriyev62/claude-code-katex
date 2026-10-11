@@ -428,6 +428,18 @@ After $y$.`,
 ];
 
 const out = document.getElementById('out');
+// Resolve only after React commits each case, rather than assuming every root
+// finishes within a fixed wall-clock delay on a busy CI runner.
+function renderMarkdown(target, md) {
+  return new Promise(resolve => {
+    class CommittedMarkdown extends React.Component {
+      componentDidMount() { resolve(); }
+      render() { return React.createElement(Markdown, { remarkPlugins, rehypePlugins }, md); }
+    }
+    createRoot(target).render(React.createElement(CommittedMarkdown));
+  });
+}
+const commits = [];
 for (const [name, md] of cases) {
   const wrap = document.createElement('div');
   wrap.className = 'case';
@@ -435,7 +447,7 @@ for (const [name, md] of cases) {
   const r = document.createElement('div'); r.className = 'render';
   wrap.appendChild(r);
   out.appendChild(wrap);
-  createRoot(r).render(React.createElement(Markdown, { remarkPlugins, rehypePlugins }, md));
+  commits.push(renderMarkdown(r, md));
 }
 
 const lateWrap = document.createElement('div');
@@ -444,15 +456,16 @@ lateWrap.innerHTML = '<div class="label">SOURCE 75 — a later streamed render g
 const lateRender = document.createElement('div'); lateRender.className = 'render';
 lateWrap.appendChild(lateRender);
 out.appendChild(lateWrap);
-setTimeout(() => {
-  createRoot(lateRender).render(React.createElement(
-    Markdown,
-    { remarkPlugins, rehypePlugins },
-    R`$$\sum_{k=1}^{n} k = \frac{n(n+1)}{2}$$`
-  ));
-}, 400);
+commits.push(new Promise(resolve => {
+  setTimeout(() => {
+    renderMarkdown(lateRender, R`$$\sum_{k=1}^{n} k = \frac{n(n+1)}{2}$$`).then(resolve);
+  }, 400);
+}));
 
-setTimeout(() => {
+Promise.race([
+  Promise.all(commits),
+  new Promise((_, reject) => setTimeout(() => reject(new Error('React did not commit every case within 20 seconds')), 20000)),
+]).then(() => {
   const wraps = out.querySelectorAll('.case');
   const results = [];
   cases.forEach(([name, md, pred], i) => {
@@ -481,7 +494,10 @@ setTimeout(() => {
   s.style.color = passed === results.length ? '#4caf50' : '#f44336';
   window.__RESULTS = results;
   window.__DONE = true;
-}, 1800);
+}).catch(error => {
+  window.__RESULTS = [{ name: 'Harness render completion', ok: false, detail: error.message }];
+  window.__DONE = true;
+});
 </script>
 </body>
 </html>

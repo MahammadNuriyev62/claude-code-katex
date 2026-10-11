@@ -5,6 +5,7 @@ const os = require('os');
 const crypto = require('crypto');
 const vm = require('vm');
 const planPatch = require('./plan-patch');
+const { replaceFiles } = require('./patch-files');
 
 const PATCH_MARKER = '/* === KaTeX LaTeX Rendering Patch === */';
 const PATCH_CSS_MARKER = '/* === KaTeX LaTeX Rendering CSS Patch === */';
@@ -42,57 +43,9 @@ const PATCH_VERSION_PREFIX = '/* katex-ext-version: ';
 // Where users report a Claude Code build the patch no longer fits.
 const ISSUES_URL = 'https://github.com/MahammadNuriyev62/claude-code-katex/issues';
 
-// The react-markdown call site in Claude Code's webview bundle:
-//   <factory>(<Markdown>, {remarkPlugins:[<plugins>], components:{...}}, <text>)
-// The patch injects the math plugins here. $1 = the JSX factory (React's
-// `createElement`, or a minified alias like `b` — Claude Code 2.1.186 switched
-// to the short-alias form), $2 = the Markdown component identifier, $3 = the
-// existing remark plugin list. `remarkPlugins` is react-markdown's stable
-// public prop name, and `<ident>(<ident>,{remarkPlugins:[` is specific enough
-// to pin the one call site, so this survives minification-hash churn; if a
-// future Claude Code reshapes the call entirely, applyPatch reports it as
-// unsupported rather than patching blind.
-//
-// The identifier runs are length-bounded ({0,N}) rather than open-ended (*).
-// This regex is matched against the multi-MB minified webview bundle; an
-// open-ended `[\w$]*\(` backtracks O(n^2) across a long word-run that isn't
-// followed by `(`, which on a megabyte-scale bundle hangs the patch. Real JSX
-// factory / component / plugin identifiers are short, so the bounds never
-// exclude a genuine match while keeping the scan linear.
-const V2_INJECT_RE = /([A-Za-z_$][\w$]{0,40})\(([A-Za-z_$][\w$]{0,40}),\{remarkPlugins:\[([A-Za-z_$][\w$,]{0,200})\]/;
-
-// Claude Code 2.1.296 spreads a helper's props instead of listing plugins at
-// the call site. Anchor on the adjacent components prop, then require that
-// the helper actually supplies remarkPlugins. Keep the helper call intact:
-// its Windows file-link plugin and urlTransform must survive the patch.
-const V2_SPREAD_RE = /([A-Za-z_$][\w$]{0,40})\(([A-Za-z_$][\w$]{0,40}),\{\.\.\.([A-Za-z_$][\w$]{0,40})\(([A-Za-z_$][\w$]{0,40}),([A-Za-z_$][\w$]{0,40})\),components:/g;
-
-function injectMathPlugins(body) {
-  const direct = [...body.matchAll(new RegExp(V2_INJECT_RE.source, 'g'))];
-  const spread = [...body.matchAll(V2_SPREAD_RE)].filter((m) => {
-    // Only accept the observed helper shape: a named function with two
-    // identifier arguments, returning plain props objects containing plugins.
-    // Escape '$' in minified identifiers before constructing the regex.
-    const helper = m[3].replace(/\$/g, '\\$');
-    const declaration = new RegExp('function ' + helper +
-      '\\([A-Za-z_$][\\w$]{0,40},[A-Za-z_$][\\w$]{0,40}\\)\\{([^{}]{0,200}\\{[^{}]{0,500}\\}[^{}]{0,100}\\{[^{}]{0,500}\\})\\}');
-    const definition = body.match(declaration);
-    return definition && /remarkPlugins:/.test(definition[1]);
-  });
-  // An ambiguous bundle is unsupported; never silently patch only one view.
-  if (direct.length + spread.length !== 1) return null;
-  if (direct.length) {
-    return body.replace(V2_INJECT_RE,
-      '$1($2,{rehypePlugins:window.__KATEX_V2_LOADED?[window.__rehypeKatex]:[],' +
-      'remarkPlugins:[$3].concat(window.__KATEX_V2_LOADED?[window.__remarkBracketMath,window.__remarkMath]:[])');
-  }
-  const m = spread[0];
-  const replacement = `${m[1]}(${m[2]},{...((p)=>window.__KATEX_V2_LOADED?{...p,` +
-    'rehypePlugins:(p.rehypePlugins||[]).concat(window.__rehypeKatex),' +
-    'remarkPlugins:(p.remarkPlugins||[]).concat(window.__remarkBracketMath,window.__remarkMath)' +
-    `}:p)(${m[3]}(${m[4]},${m[5]})),components:`;
-  return body.slice(0, m.index) + replacement + body.slice(m.index + m[0].length);
-}
+// Parse the Markdown call structurally; keep the original simple-call rewrite
+// byte-identical for existing installs. Unknown or ambiguous shapes are rejected.
+const { injectMathPlugins, V2_INJECT_RE } = require('./markdown-patch');
 
 function findClaudeCodeExtDir() {
   const ext = vscode.extensions.getExtension('anthropic.claude-code');
@@ -576,33 +529,29 @@ function syncPlanPreview(extDir, vendorDir, macroPayload, enabled) {
 // point was not found (a future Claude Code reshaped its bundle) — in which
 // case nothing on disk is touched and the caller surfaces an "unsupported"
 // message.
-function applyPatch(extDir, vendorDir, macroPayload) {
+function applyPatch(extDir, vendorDir, macroPayload, originalBody) {
   const webviewDir = path.join(extDir, 'webview');
   const jsPath = path.join(webviewDir, 'index.js');
   const cssPath = path.join(webviewDir, 'index.css');
 
-  const body = fs.readFileSync(jsPath, 'utf8');
+  const currentBody = fs.readFileSync(jsPath, 'utf8');
+  const body = originalBody === undefined ? currentBody : originalBody;
   const injectedBody = injectMathPlugins(body);
   if (injectedBody === null) {
     // The injection point is gone — leave the webview completely untouched.
     return false;
   }
 
-  // Back up originals if not already backed up
-  for (const f of [jsPath, cssPath]) {
-    if (!fs.existsSync(f + '.katex-bak')) {
-      fs.copyFileSync(f, f + '.katex-bak');
+  // If upstream replaced only JavaScript, the stylesheet can still carry our
+  // old patch. Use its verified original once, rather than duplicating styles.
+  const cssBody = fs.readFileSync(cssPath, 'utf8');
+  let originalCss = cssBody;
+  if (cssBody.includes(PATCH_CSS_MARKER)) {
+    originalCss = fs.readFileSync(cssPath + '.katex-bak', 'utf8');
+    if (originalCss.includes(PATCH_CSS_MARKER) ||
+        !cssBody.startsWith(originalCss + '\n' + PATCH_CSS_MARKER)) {
+      throw new Error('Cannot safely refresh the patched stylesheet: its original backup does not match.');
     }
-  }
-
-  // Copy KaTeX fonts
-  const fontsTarget = path.join(webviewDir, 'fonts');
-  const fontsSrc = path.join(vendorDir, 'fonts');
-  if (!fs.existsSync(fontsTarget)) {
-    fs.mkdirSync(fontsTarget, { recursive: true });
-  }
-  for (const font of fs.readdirSync(fontsSrc)) {
-    fs.copyFileSync(path.join(fontsSrc, font), path.join(fontsTarget, font));
   }
 
   // Patch index.js — inject remark-math + rehype-katex into Claude Code's
@@ -632,15 +581,16 @@ function applyPatch(extDir, vendorDir, macroPayload) {
     ? renderMacroBlock(macroPayload) + '\n'
     : '';
 
-  fs.writeFileSync(jsPath,
+  const patchedJs =
     `${PATCH_MARKER}\n${PATCH_VERSION_PREFIX}${EXTENSION_VERSION} */\n` +
     `/* KaTeX Core - MIT License - https://katex.org */\n${katexCore}\n` +
     (copyTex ? `/* KaTeX copy-tex extension (copy selection as LaTeX) - MIT License */\n${copyTex}\n` : '') +
     macroBlock +
     `${BUNDLE_ANCHOR}\n${v2Bundle}\n` +
     `/* === End KaTeX Patch — Claude Code bundle (math plugins injected) follows === */\n` +
-    injectedBody
-  );
+    injectedBody;
+  // Compile without executing, before touching backups, fonts, or bundles.
+  new vm.Script(patchedJs, { filename: 'Claude Code patched webview' });
 
   // Patch index.css — KaTeX styles
   const katexCss = fs.readFileSync(path.join(vendorDir, 'katex.min.css'), 'utf8');
@@ -662,7 +612,25 @@ ${katexCss}
 }
 ${sourceToggleCss.trimEnd()}
 /* === End KaTeX CSS Patch === */`;
-  fs.appendFileSync(cssPath, cssPatch);
+  const fontsTarget = path.join(webviewDir, 'fonts');
+  const fontsSrc = path.join(vendorDir, 'fonts');
+  const fonts = fs.readdirSync(fontsSrc).map(font => ({
+    target: path.join(fontsTarget, font), body: fs.readFileSync(path.join(fontsSrc, font))
+  }));
+  const hadFonts = fs.existsSync(fontsTarget);
+  try {
+    fs.mkdirSync(fontsTarget, { recursive: true });
+    replaceFiles([
+      { target: jsPath + '.katex-bak', body },
+      { target: cssPath + '.katex-bak', body: originalCss },
+      ...fonts,
+      { target: cssPath, body: originalCss + cssPatch, expected: Buffer.from(cssBody) },
+      { target: jsPath, body: patchedJs, expected: Buffer.from(currentBody) },
+    ]);
+  } catch (error) {
+    if (!hadFonts) { try { fs.rmdirSync(fontsTarget); } catch { /* preserve the write error */ } }
+    throw error;
+  }
 
   return true;
 }
@@ -672,14 +640,21 @@ function removePatch(extDir) {
   const jsPath = path.join(webviewDir, 'index.js');
   const cssPath = path.join(webviewDir, 'index.css');
 
-  let restored = removePlanPatch(extDir);
-  for (const f of [jsPath, cssPath]) {
+  const files = [];
+  for (const [f, marker] of [[jsPath, PATCH_MARKER], [cssPath, PATCH_CSS_MARKER]]) {
     const bak = f + '.katex-bak';
-    if (fs.existsSync(bak)) {
-      fs.copyFileSync(bak, f);
-      restored = true;
+    if (!fs.existsSync(f)) continue;
+    const current = fs.readFileSync(f);
+    if (!current.toString('utf8').includes(marker)) continue;
+    const original = fs.readFileSync(bak, 'utf8');
+    if (original.includes(marker) || (f === jsPath && !original.trim())) {
+      throw new Error('Cannot restore Claude Code: its original backup is invalid.');
     }
+    if (f === jsPath) new vm.Script(original);
+    files.push({ target: f, body: original, expected: current });
   }
+  replaceFiles(files);
+  let restored = removePlanPatch(extDir) || files.length > 0;
 
   const fontsDir = path.join(webviewDir, 'fonts');
   if (fs.existsSync(fontsDir)) {
@@ -699,7 +674,9 @@ function canRestoreOriginals(extDir) {
   const cssBak = path.join(webviewDir, 'index.css.katex-bak');
   try {
     if (!fs.existsSync(jsBak) || !fs.existsSync(cssBak)) return false;
-    if (fs.readFileSync(jsBak, 'utf8').includes(PATCH_MARKER)) return false;
+    const original = fs.readFileSync(jsBak, 'utf8');
+    if (!original.trim() || original.includes(PATCH_MARKER)) return false;
+    new vm.Script(original);
     if (fs.readFileSync(cssBak, 'utf8').includes(PATCH_CSS_MARKER)) return false;
     return true;
   } catch {
@@ -723,6 +700,14 @@ function patchWebview(extDir, vendorDir, macroPayload) {
     return applyPatch(extDir, vendorDir, macroPayload) ? 'fresh' : 'unsupported';
   }
   if (getPatchedVersion(extDir) === EXTENSION_VERSION) {
+    // Upstream can replace styles independently of JavaScript. Rebuild from
+    // the saved JS original, backing up the new stylesheet before patching it.
+    const cssPath = path.join(extDir, 'webview', 'index.css');
+    if (!fs.readFileSync(cssPath, 'utf8').includes(PATCH_CSS_MARKER)) {
+      if (!canRestoreOriginals(extDir)) return 'skipped';
+      const original = fs.readFileSync(path.join(extDir, 'webview', 'index.js.katex-bak'), 'utf8');
+      return applyPatch(extDir, vendorDir, macroPayload, original) ? 'refreshed' : 'unsupported';
+    }
     // Right build already patched. The macros may still have changed since the
     // last session — that is a rewrite of one delimited region, not a reason to
     // restore and re-apply the whole patch.
@@ -751,12 +736,8 @@ function patchWebview(extDir, vendorDir, macroPayload) {
     console.warn('[Claude Code LaTeX] Webview carries a stale patch but the original backup is missing or invalid; leaving the existing patch in place.');
     return 'skipped';
   }
-  removePatch(extDir);
-  if (isPatched(extDir)) {
-    console.error('[Claude Code LaTeX] Restore did not clear the old patch; not re-applying.');
-    return 'skipped';
-  }
-  return applyPatch(extDir, vendorDir, macroPayload) ? 'refreshed' : 'unsupported';
+  const original = fs.readFileSync(path.join(extDir, 'webview', 'index.js.katex-bak'), 'utf8');
+  return applyPatch(extDir, vendorDir, macroPayload, original) ? 'refreshed' : 'unsupported';
 }
 
 // Reloads the Claude Code webview so an on-disk patch change takes effect

@@ -202,12 +202,86 @@ describe('applyPatch', () => {
     expect(fs.readFileSync(path.join(extDir, 'webview', 'index.css.katex-bak'), 'utf8')).toBe(FIXTURE_CSS);
   });
 
-  test('does not overwrite existing backups', () => {
+  test('refreshes the JavaScript backup after an in-place upstream update without duplicating CSS', () => {
     applyPatch(extDir, vendorDir);
     fs.writeFileSync(path.join(extDir, 'webview', 'index.js.katex-bak'), 'PRESERVED');
     fs.writeFileSync(path.join(extDir, 'webview', 'index.js'), FIXTURE_JS); // un-patch on disk
     applyPatch(extDir, vendorDir);
-    expect(fs.readFileSync(path.join(extDir, 'webview', 'index.js.katex-bak'), 'utf8')).toBe('PRESERVED');
+    expect(fs.readFileSync(path.join(extDir, 'webview', 'index.js.katex-bak'), 'utf8')).toBe(FIXTURE_JS);
+    expect(readCss().split(PATCH_CSS_MARKER)).toHaveLength(2);
+    removePatch(extDir);
+    expect(readJs()).toBe(FIXTURE_JS);
+    expect(readCss()).toBe(FIXTURE_CSS);
+  });
+
+  test('refreshes both originals after upstream replaces both bundles', () => {
+    applyPatch(extDir, vendorDir);
+    const nextJs = FIXTURE_JS + '\nvar upstream=2;';
+    const nextCss = FIXTURE_CSS + '\n.upstream {color: red}';
+    fs.writeFileSync(path.join(extDir, 'webview', 'index.js'), nextJs);
+    fs.writeFileSync(path.join(extDir, 'webview', 'index.css'), nextCss);
+    expect(applyPatch(extDir, vendorDir)).toBe(true);
+    removePatch(extDir);
+    expect(readJs()).toBe(nextJs);
+    expect(readCss()).toBe(nextCss);
+  });
+
+  test.each(['katex.min.css', 'remark-math-bundle.js', 'fonts'])(
+    'a missing asset (%s) leaves bundles and backup state untouched', asset => {
+      fs.rmSync(path.join(vendorDir, asset), { recursive: true });
+      expect(() => applyPatch(extDir, vendorDir)).toThrow();
+      expect(readJs()).toBe(FIXTURE_JS);
+      expect(readCss()).toBe(FIXTURE_CSS);
+      expect(fs.readdirSync(path.join(extDir, 'webview')).sort()).toEqual(['index.css', 'index.js']);
+    });
+
+  test('malformed vendor JavaScript is rejected before any mutation', () => {
+    fs.writeFileSync(path.join(vendorDir, 'remark-math-bundle.js'), 'function broken( {');
+    expect(() => applyPatch(extDir, vendorDir)).toThrow();
+    expect(readJs()).toBe(FIXTURE_JS);
+    expect(readCss()).toBe(FIXTURE_CSS);
+    expect(fs.readdirSync(path.join(extDir, 'webview')).sort()).toEqual(['index.css', 'index.js']);
+  });
+
+  test('a locked JavaScript file rolls back styles, fonts, and backups', () => {
+    const rename = fs.renameSync;
+    const spy = jest.spyOn(fs, 'renameSync').mockImplementation((from, to) => {
+      if (to === path.join(extDir, 'webview', 'index.js')) throw new Error('file locked');
+      return rename(from, to);
+    });
+    try { expect(() => applyPatch(extDir, vendorDir)).toThrow('file locked'); }
+    finally { spy.mockRestore(); }
+    expect(readJs()).toBe(FIXTURE_JS);
+    expect(readCss()).toBe(FIXTURE_CSS);
+    expect(fs.readdirSync(path.join(extDir, 'webview')).sort()).toEqual(['index.css', 'index.js']);
+  });
+
+  test('an upstream update during preparation is preserved', () => {
+    const write = fs.writeFileSync;
+    const nextJs = FIXTURE_JS + '\nvar newer=1;';
+    let changed = false;
+    const spy = jest.spyOn(fs, 'writeFileSync').mockImplementation((target, ...args) => {
+      if (!changed && String(target).endsWith('.tmp')) {
+        changed = true;
+        write(path.join(extDir, 'webview', 'index.js'), nextJs);
+      }
+      return write(target, ...args);
+    });
+    try { expect(() => applyPatch(extDir, vendorDir)).toThrow('changed while preparing'); }
+    finally { spy.mockRestore(); }
+    expect(readJs()).toBe(nextJs);
+    expect(readCss()).toBe(FIXTURE_CSS);
+    expect(fs.readdirSync(path.join(extDir, 'webview')).sort()).toEqual(['index.css', 'index.js']);
+  });
+
+  test('a patched stylesheet with an unrelated backup is refused', () => {
+    applyPatch(extDir, vendorDir);
+    fs.writeFileSync(path.join(extDir, 'webview', 'index.js'), FIXTURE_JS);
+    fs.writeFileSync(path.join(extDir, 'webview', 'index.css.katex-bak'), 'unrelated');
+    const css = readCss();
+    expect(() => applyPatch(extDir, vendorDir)).toThrow('backup does not match');
+    expect(readJs()).toBe(FIXTURE_JS);
+    expect(readCss()).toBe(css);
   });
 
   test('writes the patch marker and version stamp', () => {
@@ -364,6 +438,17 @@ describe('removePatch', () => {
     expect(isPatched(extDir)).toBe(false);
   });
 
+  test('does not downgrade files already replaced by an upstream update', () => {
+    applyPatch(extDir, vendorDir);
+    const nextJs = FIXTURE_JS + '\nvar upstream=3;';
+    const nextCss = FIXTURE_CSS + '\n.upstream {}';
+    fs.writeFileSync(path.join(extDir, 'webview', 'index.js'), nextJs);
+    fs.writeFileSync(path.join(extDir, 'webview', 'index.css'), nextCss);
+    removePatch(extDir);
+    expect(readJs()).toBe(nextJs);
+    expect(readCss()).toBe(nextCss);
+  });
+
   test('patch -> remove -> patch cycle works', () => {
     applyPatch(extDir, vendorDir);
     expect(isPatched(extDir)).toBe(true);
@@ -386,6 +471,16 @@ describe('removePatch', () => {
     applyPatch(extDir, vendorDir);
     fs.rmSync(path.join(extDir, 'webview', 'fonts'), { recursive: true });
     expect(() => removePatch(extDir)).not.toThrow();
+  });
+
+  test.each(['', 'function broken(', PATCH_MARKER])('refuses a corrupt JS backup without removing fonts: %s', backup => {
+    applyPatch(extDir, vendorDir);
+    const beforeJs = readJs(), beforeCss = readCss();
+    fs.writeFileSync(path.join(extDir, 'webview', 'index.js.katex-bak'), backup);
+    expect(() => removePatch(extDir)).toThrow();
+    expect(readJs()).toBe(beforeJs);
+    expect(readCss()).toBe(beforeCss);
+    expect(fs.existsSync(path.join(extDir, 'webview', 'fonts', 'KaTeX_Main.woff2'))).toBe(true);
   });
 });
 
@@ -486,6 +581,27 @@ describe('ensurePatched', () => {
     const before = fs.readFileSync(path.join(extDir, 'webview', 'index.js'));
     expect(ensurePatched(extDir, vendorDir)).toBe('current');
     expect(fs.readFileSync(path.join(extDir, 'webview', 'index.js')).equals(before)).toBe(true);
+  });
+
+  test('repairs a stylesheet-only upstream replacement and preserves its new original', () => {
+    applyPatch(extDir, vendorDir);
+    const nextCss = FIXTURE_CSS + '\n.upstream {}';
+    fs.writeFileSync(path.join(extDir, 'webview', 'index.css'), nextCss);
+    expect(ensurePatched(extDir, vendorDir)).toBe('refreshed');
+    expect(readCss().split(PATCH_CSS_MARKER)).toHaveLength(2);
+    removePatch(extDir);
+    expect(readJs()).toBe(FIXTURE_JS);
+    expect(readCss()).toBe(nextCss);
+  });
+
+  test('failed refresh preserves the old working patch', () => {
+    applyPatch(extDir, vendorDir);
+    makeStalePatch('0.0.1');
+    const js = readJs(), css = readCss();
+    fs.writeFileSync(path.join(vendorDir, 'remark-math-bundle.js'), 'function broken( {');
+    expect(() => ensurePatched(extDir, vendorDir)).toThrow();
+    expect(readJs()).toBe(js);
+    expect(readCss()).toBe(css);
   });
 
   test('"refreshed" for an older-version patch: restores then re-patches once', () => {

@@ -1,6 +1,7 @@
 node_modules/
 *.vsix
 .env
+.env.*
 .claude/
 .worktrees/
 test-results/

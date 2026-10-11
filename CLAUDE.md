@@ -12,15 +12,24 @@ plugin chain, so math is tokenized *during* Markdown parsing — verbatim —
 instead of being repaired in the DOM afterward.
 
 - `applyPatch` (in `extension.js`) locates Claude Code's single react-markdown
-  call with `injectMathPlugins`: either a direct `remarkPlugins:[...]` prop
-  (`V2_INJECT_RE`), or the helper-props spread introduced in 2.1.296
-  (`V2_SPREAD_RE`, also checked against the helper's definition). It adds
+  call with `injectMathPlugins` in `markdown-patch.js`. Vendored Acorn parses
+  JavaScript structure, accepting direct plugin props and helper-props spreads
+  regardless of minified names, whitespace, comments, or property order.
+  Helper definitions are resolved within their lexical scope; reassigned or
+  shadowed helpers cannot establish an injection point. It adds
   `rehypePlugins:[rehypeKatex]` and `remarkPlugins:[gfm, remarkBracketMath,
   remarkMath]`. The injected references are guarded on `window.__KATEX_V2_LOADED`
   so a bundle-load failure cannot break Claude Code's Markdown.
   The spread form evaluates the original helper once and preserves its plugins
   and URL transform, including the Windows file-link plugin. Multiple candidate
   call sites are rejected as unsupported.
+- The complete patched JavaScript must compile before any files change. All
+  assets are read first, then backups, fonts, CSS, and JS are staged and replaced
+  with per-file renames. Ordinary write failures roll back prior replacements;
+  a process crash between renames is not an atomic transaction across files.
+  Fresh upstream files replace stale backups. If only JS was replaced, the
+  existing CSS backup must match before its old patch is replaced. Disable and
+  uninstall never restore an old backup over an unpatched upstream file.
 - It prepends, in order, `vendor/katex.min.js`, the optional KaTeX contrib
   `vendor/copy-tex.min.js` (copying a selection of rendered math yields its
   LaTeX source), and `vendor/remark-math-bundle.js` to the webview bundle
@@ -48,8 +57,8 @@ instead of being repaired in the DOM afterward.
   written before the feature existed. Changing a macro rewrites only that block
   in place; it never restores and re-applies the patch.
 
-The patch is version-stamped; an extension update restores the originals from
-`.katex-bak` and re-applies.
+The patch is version-stamped; an extension update prepares its replacement from
+the `.katex-bak` originals before changing the existing patch.
 
 ## The plan approval view - `plan-patch.js`
 
@@ -150,6 +159,9 @@ npm run build:bundle
 
 (esbuild IIFE; KaTeX is externalized to `window.katex` via
 `src/webview/katex-global-shim.js`.)
+
+After upgrading Acorn, run `npm run build:parser` and copy its MIT license to
+`vendor/acorn.LICENSE`. The parser ships in the VSIX without runtime dependencies.
 
 ## Where Claude Code lives
 

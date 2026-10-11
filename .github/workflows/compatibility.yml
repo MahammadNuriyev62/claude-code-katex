@@ -1,0 +1,44 @@
+name: Claude Code compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        claude: ['2.1.288', '2.1.296', 'latest']
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Build against upstream
+        env:
+          CLAUDE_VERSION: ${{ matrix.claude }}
+        run: |
+          version="$CLAUDE_VERSION"
+          if [ "$version" = latest ]; then version=""; fi
+          docker build --build-arg CLAUDE_CODE_VERSION="$version" -t katex-compatibility .
+      - name: Unit and browser regression tests
+        if: matrix.claude == 'latest'
+        run: docker run --rm katex-compatibility ci
+      - name: Real extension activation
+        run: docker run --rm katex-compatibility smoke
+      - name: Real webview macros and source reveal
+        run: docker run --rm -v "$PWD/test-results:/app/test-results" katex-compatibility macros
+      - name: Preserve browser evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: compatibility-${{ matrix.claude }}
+          path: test-results/
+          if-no-files-found: ignore

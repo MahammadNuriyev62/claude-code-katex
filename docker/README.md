@@ -6,13 +6,21 @@ against a hand-maintained remote VS Code.
 
 | Level | What it exercises | Browser | Network | Claude auth |
 |------:|-------------------|:-------:|:-------:|:-----------:|
-| **1** | `jest` unit tests — patch lifecycle, injection regex, macro payload + macro ingestion | – | – | – |
+| **1** | `jest` unit tests — patch lifecycle and rollback, structural injection, macro payload + macro ingestion | – | – | – |
 | **2** | The math pipeline through Claude Code's real react-markdown → remark-math → rehype-katex chain — the torture harness, a second page carrying a user macro payload, and a third driving the plan approval view through real marked | ✓ | ✓ (CDN) | – |
 | **macros** | User macros and the source-reveal control running **inside** the real Claude Code webview in code-server | ✓ | ✓ | – |
 | **plan-toggle** | The default-off plan setting applying and restoring the host patch across real code-server window reloads | ✓ | ✓ | – |
 | **3** | The **real** extension patching the **real** Claude Code in code-server, asserting KaTeX renders in the live webview | ✓ | ✓ | ✓ |
 
 ## Build
+
+The GitHub `Claude Code compatibility` workflow checks pinned versions 2.1.288
+and 2.1.296 plus the latest available Open VSX version on pull requests, pushes
+to main, and manual runs. Each version runs activation and real-webview probes;
+the latest also runs unit and browser regression tests. No account token is
+needed. A clean runner fetches upstream afresh; this is not a scheduled monitor.
+
+Local `.env` files are excluded from both image and VSIX builds.
 
 ```sh
 docker build -t claude-code-katex-tests .

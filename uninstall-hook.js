@@ -3,6 +3,8 @@
 
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
+const { replaceFiles } = require('./patch-files');
 
 function findClaudeCodeDir() {
   const searchDirs = [
@@ -24,11 +26,28 @@ function findClaudeCodeDir() {
 }
 
 function cleanupClaudeCode(extDir) {
-  for (const f of ['webview/index.js', 'webview/index.css']) {
+  for (const [f, marker] of [
+    ['webview/index.js', '/* === KaTeX LaTeX Rendering Patch === */'],
+    ['webview/index.css', '/* === KaTeX LaTeX Rendering CSS Patch === */'],
+  ]) {
     const bak = path.join(extDir, f + '.katex-bak');
     const orig = path.join(extDir, f);
     if (fs.existsSync(bak)) {
-      fs.copyFileSync(bak, orig);
+      // An upstream update may already have replaced the patched file. Never
+      // downgrade that unpatched bundle to an older saved original.
+      if (fs.existsSync(orig) && fs.readFileSync(orig, 'utf8').includes(marker)) {
+        const original = fs.readFileSync(bak, 'utf8');
+        try {
+          if (original.includes(marker) || (f.endsWith('.js') && !original.trim())) {
+            throw new Error('original backup is invalid');
+          }
+          if (f.endsWith('.js')) new vm.Script(original);
+          replaceFiles([{ target: orig, body: original }]);
+        } catch (error) {
+          console.warn('[Claude Code LaTeX] Could not restore ' + f + ': ' + error.message);
+          continue;
+        }
+      }
       fs.unlinkSync(bak);
     }
   }
@@ -53,7 +72,10 @@ function cleanupClaudeCode(extDir) {
   }
 
   const fontsDir = path.join(extDir, 'webview', 'fonts');
-  if (fs.existsSync(fontsDir)) {
+  const jsPath = path.join(extDir, 'webview', 'index.js');
+  const stillPatched = fs.existsSync(jsPath) &&
+    fs.readFileSync(jsPath, 'utf8').includes('/* === KaTeX LaTeX Rendering Patch === */');
+  if (!stillPatched && fs.existsSync(fontsDir)) {
     fs.rmSync(fontsDir, { recursive: true });
   }
 }

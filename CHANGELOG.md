@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Improved
+- Locate Markdown plugin props by JavaScript structure rather than minified
+  formatting, preserving existing plugins and rejecting ambiguous matches.
+- Validate the complete patch before writing; stage writes and roll back normal
+  write failures. Refresh originals after in-place upstream updates and avoid
+  restoring stale backups over newer unpatched files.
+- Add token-free compatibility CI against two pinned Claude Code versions and
+  the latest available release, including real-webview source-reveal checks.
+- Exclude local `.env` files from Docker test images and extension packaging.
+
 ## [2.1.3] - 2026-10-11
 
 ### Fixed

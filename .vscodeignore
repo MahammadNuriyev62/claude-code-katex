@@ -3,6 +3,8 @@
 node_modules/**
 .gitignore
 .env
+.env.*
+.github/**
 .claude/**
 *.test.js
 __snapshots__/**

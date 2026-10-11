@@ -68,6 +68,7 @@ COPY . .
 
 # Always test the current entry.js, not a possibly-stale committed bundle.
 RUN npm run build:bundle
+RUN npm run build:parser
 
 # Ports: code-server (L3) and the static harness server (L2) are distinct so the
 # two levels never collide.
