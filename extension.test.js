@@ -25,6 +25,8 @@ jest.mock('vscode', () => ({
     showWarningMessage: mockShowWarningMessage,
     showErrorMessage: mockShowErrorMessage,
     createStatusBarItem: mockCreateStatusBarItem,
+    registerUriHandler: jest.fn(() => ({ dispose() {} })),
+    onDidChangeActiveTextEditor: jest.fn(() => ({ dispose() {} })),
   },
   commands: {
     registerCommand: mockRegisterCommand,
@@ -732,10 +734,10 @@ describe('activate', () => {
     expect(mockStatusBarItem.text).toMatch(/LaTeX/);
   });
 
-  test('pushes 7 disposables (4 commands + status bar + extension/config watchers)', () => {
+  test('pushes 9 disposables (4 commands + link handler + binary-file fix + status bar + extension/config watchers)', () => {
     mockGetExtension.mockReturnValue({ extensionPath: extDir });
     activate(context);
-    expect(context.subscriptions.length).toBe(7);
+    expect(context.subscriptions.length).toBe(9);
   });
 
   test('registers an onDidChange watcher', () => {
@@ -1357,5 +1359,62 @@ describe('edge cases', () => {
   test('the patched bundle keeps the marker exactly once', () => {
     applyPatch(extDir, vendorDir);
     expect(readJs().split(PATCH_MARKER).length - 1).toBe(1);
+  });
+});
+
+// ============================================================
+// File-link menu (opt-in, claudeCodeKatex.fileLinks)
+// ============================================================
+describe('file-link menu', () => {
+  const { ensurePatched, hasFileLinks, LINKS_MARKER, LINKS_CSS_BEGIN, LINK_HANDLER } = _test;
+
+  beforeEach(() => {
+    setupFakeClaudeCodeExt();
+    setupFakeVendorDir();
+    fs.writeFileSync(path.join(vendorDir, 'links.js'), "/* links mock */ var HANDLER = '__CCL_HANDLER__';");
+    fs.writeFileSync(path.join(vendorDir, 'links.css'), '/* links css mock */');
+  });
+
+  test('off by default: no block, no CSS', () => {
+    applyPatch(extDir, vendorDir);
+    expect(hasFileLinks(readJs())).toBe(false);
+    expect(readJs()).not.toContain('links mock');
+    expect(readCss()).not.toContain(LINKS_CSS_BEGIN);
+  });
+
+  test('when enabled: block after the math bundle with the handler URI filled in, CSS inside the CSS patch', () => {
+    applyPatch(extDir, vendorDir, undefined, undefined, true);
+    const js = readJs();
+    expect(js.indexOf(LINKS_MARKER)).toBeGreaterThan(js.indexOf(_test.BUNDLE_ANCHOR));
+    expect(js).toContain(`var HANDLER = '${LINK_HANDLER}';`);
+    expect(js).not.toContain('__CCL_HANDLER__');
+    expect(LINK_HANDLER).toBe('vscode://nuriyev.claude-code-katex/link');
+    const css = readCss();
+    expect(css.indexOf(LINKS_CSS_BEGIN)).toBeLessThan(css.indexOf('/* === End KaTeX CSS Patch === */'));
+  });
+
+  test('turning it on and off re-applies the patch; off is the zero-config patch exactly', () => {
+    applyPatch(extDir, vendorDir);
+    const plainJs = readJs();
+    const plainCss = readCss();
+    expect(ensurePatched(extDir, vendorDir, undefined, true)).toBe('refreshed');
+    expect(hasFileLinks(readJs())).toBe(true);
+    expect(readJs().split(PATCH_MARKER).length - 1).toBe(1);
+    expect(ensurePatched(extDir, vendorDir, undefined, true)).toBe('current');
+    expect(ensurePatched(extDir, vendorDir, undefined, false)).toBe('refreshed');
+    expect(readJs()).toBe(plainJs);
+    expect(readCss()).toBe(plainCss);
+  });
+
+  test('changing the setting re-patches and reloads the webview', () => {
+    mockGetExtension.mockReturnValue({ extensionPath: extDir });
+    activate({ extensionPath: tmpDir, subscriptions: [] });
+    expect(hasFileLinks(readJs())).toBe(false);
+    const onChange = mockOnDidChangeConfiguration.mock.calls[mockOnDidChangeConfiguration.mock.calls.length - 1][0];
+    setMacroConfig({ fileLinks: true });
+    mockExecuteCommand.mockClear();
+    onChange({ affectsConfiguration: (k) => k === 'claudeCodeKatex.fileLinks' });
+    expect(hasFileLinks(readJs())).toBe(true);
+    expect(mockExecuteCommand).toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
   });
 });
