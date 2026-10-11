@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [2.1.4] - 2026-10-11
 
 ### Improved
 - Locate Markdown plugin props by JavaScript structure rather than minified
