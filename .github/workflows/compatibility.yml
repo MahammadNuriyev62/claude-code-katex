@@ -37,7 +37,9 @@ jobs:
       - name: Real extension activation
         run: docker run --rm katex-compatibility smoke
       - name: Real webview macros and source reveal
-        run: docker run --rm -v "$PWD/test-results:/app/test-results" katex-compatibility macros
+        run: |
+          mkdir -p test-results
+          docker run --rm -v "$PWD/test-results:/app/test-results" katex-compatibility macros
       - name: Published extension against latest Claude Code
         if: always() && matrix.claude == 'latest' && steps.build.outcome == 'success'
         env:
