@@ -1,0 +1,187 @@
+/* Annotation pop-up and highlight styles. Colors come from the
+ * VS Code theme variables the webview already receives. */
+.cca-pop {
+  position: fixed;
+  z-index: 2147483000;
+  box-sizing: border-box;
+  padding: 4px;
+  border-radius: 12px;
+  background: var(--vscode-editorWidget-background, #252526);
+  color: var(--vscode-editorWidget-foreground, #cccccc);
+  border: 1px solid var(--vscode-editorWidget-border, var(--vscode-widget-border, #454545));
+  box-shadow: 0 4px 16px var(--vscode-widget-shadow, rgba(0, 0, 0, 0.36));
+  font-family: var(--vscode-font-family, sans-serif);
+  font-size: var(--vscode-font-size, 13px);
+}
+.cca-pop:focus-within {
+  border-color: var(--vscode-focusBorder, #007fd4);
+}
+.cca-field {
+  position: relative;
+}
+.cca-pop textarea {
+  display: block;
+  box-sizing: border-box;
+  width: 240px;
+  min-width: 120px;
+  max-width: calc(100vw - 32px);
+  min-height: calc(1.4em + 10px);
+  max-height: 40vh;
+  resize: both;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--vscode-input-foreground, #cccccc);
+  font: inherit;
+  line-height: 1.4;
+  outline: none;
+}
+/* Room on the right for an inline check button, clear of the resize grip. */
+.cca-pop.cca-inline-ok textarea {
+  padding-right: 42px;
+}
+.cca-pop textarea::placeholder {
+  color: var(--vscode-input-placeholderForeground, #8b8b8b);
+}
+.cca-pop button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  margin: 0;
+  font: inherit;
+  cursor: pointer;
+}
+/* Check and Save: black with white in light themes, inverted in dark ones
+ * so they still stand out against the panel. */
+.cca-pop .cca-ok,
+.cca-pop .cca-save {
+  background: #000000;
+  color: #ffffff;
+  border: 1px solid #000000;
+}
+body.vscode-dark .cca-pop .cca-ok,
+body.vscode-dark .cca-pop .cca-save,
+body.vscode-high-contrast .cca-pop .cca-ok,
+body.vscode-high-contrast .cca-pop .cca-save {
+  background: #ffffff;
+  color: #000000;
+  border-color: #ffffff;
+}
+.cca-okrow {
+  position: absolute;
+  top: 8px;
+  right: 20px;
+  display: flex;
+}
+.cca-okrow[hidden] {
+  display: none;
+}
+/* Multi-line: the check gets its own row under the text. */
+.cca-pop.cca-stacked .cca-okrow {
+  position: static;
+  justify-content: flex-end;
+  padding: 2px 4px 2px 0;
+}
+.cca-pop .cca-ok {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 50%;
+}
+.cca-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 2px 2px;
+}
+.cca-spacer {
+  flex: 1;
+}
+.cca-pop .cca-del {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--vscode-editorWidget-foreground, #cccccc);
+}
+.cca-pop .cca-del:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+.cca-pop .cca-cancel,
+.cca-pop .cca-save {
+  height: 26px;
+  padding: 0 12px;
+  border-radius: 13px;
+}
+.cca-pop .cca-cancel {
+  background: transparent;
+  color: var(--vscode-editorWidget-foreground, #cccccc);
+  border: 1px solid var(--vscode-widget-border, var(--vscode-editorWidget-border, #454545));
+}
+.cca-pop .cca-cancel:hover {
+  background: var(--vscode-toolbar-hoverBackground, rgba(90, 93, 94, 0.31));
+}
+.cca-badge {
+  position: fixed;
+  z-index: 2147482000;
+  box-sizing: border-box;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px 8px 8px 2px;
+  background: #2f81f7;
+  color: #ffffff;
+  font: 600 10px/16px var(--vscode-font-family, sans-serif);
+  text-align: center;
+  cursor: pointer;
+  user-select: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+.cca-badge:hover {
+  background: #1f6feb;
+}
+.cca-measure {
+  position: absolute;
+  left: -99999px;
+  top: 0;
+  width: 800px;
+  white-space: normal;
+}
+.cca-toast {
+  position: fixed;
+  z-index: 2147483000;
+  left: 50%;
+  bottom: 80px;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  padding: 6px 12px;
+  border-radius: 4px;
+  background: var(--vscode-notifications-background, #252526);
+  color: var(--vscode-notifications-foreground, #cccccc);
+  border: 1px solid var(--vscode-notifications-border, #454545);
+}
+::highlight(cca-pending) {
+  background-color: var(--vscode-editor-selectionBackground, rgba(38, 79, 120, 0.8));
+}
+::highlight(cca-noted) {
+  background-color: var(--vscode-editor-selectionBackground, rgba(38, 79, 120, 0.8));
+}
+::highlight(cca-label) {
+  /* Faux bold: a real font-weight would change glyph widths and pull the
+   * prompt box's mirror text out of line with its caret. */
+  color: var(--vscode-textLink-foreground, #3794ff);
+  text-shadow: 0.35px 0 0 var(--vscode-textLink-foreground, #3794ff), -0.35px 0 0 var(--vscode-textLink-foreground, #3794ff);
+}
+
+/* Claude Code turns text selection off for its whole app and back on per message type. Focus
+ * view draws replies outside that list, so they could not be selected, copied, or annotated.
+ * Re-enable selection for the whole message list; fold rows, tool-call headers, and the badges
+ * above keep their own user-select: none. */
+[class*="messagesContainer_"] {
+  -webkit-user-select: text;
+  user-select: text;
+}

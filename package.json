@@ -78,6 +78,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Experimental: render LaTeX in Claude Code's plan approval view. This requires modifying Claude Code's host `extension.js`, with a validated backup and automatic restoration when disabled or uninstalled. Changing this setting prompts you to reload the VS Code window."
+        },
+        "claudeCodeKatex.annotate": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Annotate Claude's replies. Select text in a reply and a one-line note box appears over it; type a comment and press Enter to add the quote and your comment to the prompt box as a numbered `Annotation N:` block. Selected math is quoted as its LaTeX source. Shift+Enter adds a line, Esc cancels.\n\nTakes effect immediately (the webview reloads)."
         }
       }
     }
@@ -86,7 +91,8 @@
     "test": "jest",
     "build:parser": "esbuild node_modules/acorn/dist/acorn.js --bundle --platform=node --format=cjs --minify --legal-comments=inline --outfile=vendor/acorn.js",
     "build:bundle": "esbuild src/webview/entry.js --bundle --format=iife --minify --alias:katex=./src/webview/katex-global-shim.js --outfile=vendor/remark-math-bundle.js",
-    "vscode:uninstall": "node ./uninstall-hook.js"
+    "vscode:uninstall": "node ./uninstall-hook.js",
+    "test:annotate": "node test/annotate-harness.mjs"
   },
   "extensionDependencies": [
     "anthropic.claude-code"

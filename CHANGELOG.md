@@ -1,5 +1,17 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Annotate Claude's replies** (opt-in, `claudeCodeKatex.annotate`). Select
+  text in a reply, type a note in the box that pops up over it, and press
+  Enter: the quote and the note go into the prompt box as a numbered
+  `Annotation N:` block. Math in the selection is quoted as its LaTeX source.
+  Each annotated span keeps a numbered balloon: click it to edit the comment
+  in place or delete the annotation. Replies stay selectable in Claude Code's
+  Focus view, which otherwise turns selection off for them. With the setting
+  off, which is the default, the patch is unchanged.
+
 ## [2.1.4] - 2026-10-11
 
 ### Improved
