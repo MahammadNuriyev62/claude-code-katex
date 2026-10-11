@@ -40,6 +40,14 @@ const EXTENSION_VERSION = require('./package.json').version;
 // Patches from builds <= 1.9.0 have no stamp at all (getPatchedVersion -> null).
 const PATCH_VERSION_PREFIX = '/* katex-ext-version: ';
 
+// Opt-in annotation pop-up (setting claudeCodeKatex.annotate): select text in
+// a reply, type a note, and the quote plus note go into the prompt box. It is
+// plain DOM code prepended after the math bundle, with its own marker so a
+// changed setting can be told apart from the applied patch. Off -> no block
+// and no CSS, so the patch is exactly what it was without it.
+const ANNOTATE_MARKER = '/* === Annotation pop-up === */';
+const ANNOTATE_CSS_BEGIN = '/* === Annotation pop-up CSS === */';
+
 // Where users report a Claude Code build the patch no longer fits.
 const ISSUES_URL = 'https://github.com/MahammadNuriyev62/claude-code-katex/issues';
 
@@ -231,6 +239,18 @@ function getPatchedVersion(extDir) {
 }
 
 // --- macro configuration -------------------------------------------------
+
+function readAnnotateConfig() {
+  try {
+    return vscode.workspace.getConfiguration('claudeCodeKatex').get('annotate', false) === true;
+  } catch {
+    return false;
+  }
+}
+
+function hasAnnotate(body) {
+  return body.includes(ANNOTATE_MARKER);
+}
 
 function readMacroConfig() {
   try {
@@ -529,7 +549,7 @@ function syncPlanPreview(extDir, vendorDir, macroPayload, enabled) {
 // point was not found (a future Claude Code reshaped its bundle) — in which
 // case nothing on disk is touched and the caller surfaces an "unsupported"
 // message.
-function applyPatch(extDir, vendorDir, macroPayload, originalBody) {
+function applyPatch(extDir, vendorDir, macroPayload, originalBody, annotate) {
   const webviewDir = path.join(extDir, 'webview');
   const jsPath = path.join(webviewDir, 'index.js');
   const cssPath = path.join(webviewDir, 'index.css');
@@ -573,6 +593,17 @@ function applyPatch(extDir, vendorDir, macroPayload, originalBody) {
   const copyTexPath = path.join(vendorDir, 'copy-tex.min.js');
   const copyTex = fs.existsSync(copyTexPath) ? fs.readFileSync(copyTexPath, 'utf8') : '';
   const v2Bundle = fs.readFileSync(path.join(vendorDir, 'remark-math-bundle.js'), 'utf8');
+  // The annotation pop-up, when enabled. Independent of the math pipeline: a
+  // missing file only means no pop-up.
+  const annotateJsPath = path.join(vendorDir, 'annotate.js');
+  const annotateCssPath = path.join(vendorDir, 'annotate.css');
+  const withAnnotate = annotate === true && fs.existsSync(annotateJsPath) && fs.existsSync(annotateCssPath);
+  const annotateBlock = withAnnotate
+    ? `${ANNOTATE_MARKER}\n${fs.readFileSync(annotateJsPath, 'utf8')}\n`
+    : '';
+  const annotateCss = withAnnotate
+    ? `${ANNOTATE_CSS_BEGIN}\n${fs.readFileSync(annotateCssPath, 'utf8').trimEnd()}\n`
+    : '';
   // The user's macros, if any. Emitted after KaTeX core (ingestion needs
   // window.katex) and before the math bundle (which consumes them at load).
   // No macros configured -> no block, and the patch is byte-for-byte what it
@@ -587,6 +618,7 @@ function applyPatch(extDir, vendorDir, macroPayload, originalBody) {
     (copyTex ? `/* KaTeX copy-tex extension (copy selection as LaTeX) - MIT License */\n${copyTex}\n` : '') +
     macroBlock +
     `${BUNDLE_ANCHOR}\n${v2Bundle}\n` +
+    annotateBlock +
     `/* === End KaTeX Patch — Claude Code bundle (math plugins injected) follows === */\n` +
     injectedBody;
   // Compile without executing, before touching backups, fonts, or bundles.
@@ -611,7 +643,7 @@ ${katexCss}
   font-size: 1.1em;
 }
 ${sourceToggleCss.trimEnd()}
-/* === End KaTeX CSS Patch === */`;
+${annotateCss}/* === End KaTeX CSS Patch === */`;
   const fontsTarget = path.join(webviewDir, 'fonts');
   const fontsSrc = path.join(vendorDir, 'fonts');
   const fonts = fs.readdirSync(fontsSrc).map(font => ({
@@ -691,22 +723,24 @@ function canRestoreOriginals(extDir) {
 //   'skipped'     - patch is stale but cannot be refreshed safely; left untouched
 //   'unsupported' - the react-markdown injection point was not found
 // May throw on filesystem errors from applyPatch/removePatch; callers handle.
-function ensurePatched(extDir, vendorDir, macroPayload) {
-  return patchWebview(extDir, vendorDir, macroPayload);
+// The annotation setting is read here unless a caller passes it.
+function ensurePatched(extDir, vendorDir, macroPayload, annotate = readAnnotateConfig()) {
+  return patchWebview(extDir, vendorDir, macroPayload, annotate);
 }
 
-function patchWebview(extDir, vendorDir, macroPayload) {
+function patchWebview(extDir, vendorDir, macroPayload, annotate) {
   if (!isPatched(extDir)) {
-    return applyPatch(extDir, vendorDir, macroPayload) ? 'fresh' : 'unsupported';
+    return applyPatch(extDir, vendorDir, macroPayload, undefined, annotate) ? 'fresh' : 'unsupported';
   }
-  if (getPatchedVersion(extDir) === EXTENSION_VERSION) {
+  const annotateMatches = hasAnnotate(fs.readFileSync(path.join(extDir, 'webview', 'index.js'), 'utf8')) === (annotate === true);
+  if (getPatchedVersion(extDir) === EXTENSION_VERSION && annotateMatches) {
     // Upstream can replace styles independently of JavaScript. Rebuild from
     // the saved JS original, backing up the new stylesheet before patching it.
     const cssPath = path.join(extDir, 'webview', 'index.css');
     if (!fs.readFileSync(cssPath, 'utf8').includes(PATCH_CSS_MARKER)) {
       if (!canRestoreOriginals(extDir)) return 'skipped';
       const original = fs.readFileSync(path.join(extDir, 'webview', 'index.js.katex-bak'), 'utf8');
-      return applyPatch(extDir, vendorDir, macroPayload, original) ? 'refreshed' : 'unsupported';
+      return applyPatch(extDir, vendorDir, macroPayload, original, annotate) ? 'refreshed' : 'unsupported';
     }
     // Right build already patched. The macros may still have changed since the
     // last session — that is a rewrite of one delimited region, not a reason to
@@ -729,15 +763,16 @@ function patchWebview(extDir, vendorDir, macroPayload) {
     }
     return 'current';
   }
-  // A patch from an older (or pre-versioning) build is present. Refresh it so
-  // the injected code matches this build — but only if the pristine originals
-  // can be safely restored first.
+  // A patch from an older (or pre-versioning) build is present, or the
+  // annotation setting no longer matches it. Refresh it so the injected code
+  // matches this build and settings — but only if the pristine originals can
+  // be safely restored first.
   if (!canRestoreOriginals(extDir)) {
     console.warn('[Claude Code LaTeX] Webview carries a stale patch but the original backup is missing or invalid; leaving the existing patch in place.');
     return 'skipped';
   }
   const original = fs.readFileSync(path.join(extDir, 'webview', 'index.js.katex-bak'), 'utf8');
-  return applyPatch(extDir, vendorDir, macroPayload, original) ? 'refreshed' : 'unsupported';
+  return applyPatch(extDir, vendorDir, macroPayload, original, annotate) ? 'refreshed' : 'unsupported';
 }
 
 // Reloads the Claude Code webview so an on-disk patch change takes effect
@@ -1004,6 +1039,24 @@ function activate(context) {
 
   context.subscriptions.push(
     vscode.workspace.onDidChangeConfiguration(async function(event) {
+      // Turning the annotation pop-up on or off takes effect right away: the
+      // patch is re-applied with or without it and the webview reloaded.
+      if (event.affectsConfiguration('claudeCodeKatex.annotate')) {
+        const dir = findClaudeCodeExtDir();
+        if (dir && isPatched(dir)) {
+          try {
+            const on = readAnnotateConfig();
+            const result = ensurePatched(dir, vendorDir, currentMacroPayload(), on);
+            if (result === 'refreshed') {
+              reloadWebviewAndNotify(`Claude Code LaTeX annotation pop-up ${on ? 'enabled' : 'disabled'}. The webview was reloaded.`);
+            } else if (result === 'unsupported') {
+              notifyUnsupported();
+            }
+          } catch (e) {
+            vscode.window.showErrorMessage('Failed to update the patch: ' + e.message);
+          }
+        }
+      }
       if (!event.affectsConfiguration('claudeCodeKatex.renderPlanPreview')) return;
       const dir = findClaudeCodeExtDir();
       if (!dir) {
@@ -1101,4 +1154,8 @@ module.exports._test = {
   MACRO_HASH_PREFIX,
   MACRO_LIMITS,
   BUNDLE_ANCHOR,
+  readAnnotateConfig,
+  hasAnnotate,
+  ANNOTATE_MARKER,
+  ANNOTATE_CSS_BEGIN,
 };

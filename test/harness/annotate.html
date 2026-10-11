@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Claude Code LaTeX annotation pop-up harness</title>
+<link rel="stylesheet" href="../../vendor/katex.min.css">
+<link rel="stylesheet" href="../../vendor/annotate.css">
+<script src="../../vendor/katex.min.js"></script>
+<style>
+  body { font-family: sans-serif; background:#1e1e1e; color:#ddd; margin:0; }
+  [class^="messagesContainer_"] { height: 70vh; overflow:auto; padding: 16px; }
+  [class^="messageInput_"] { border:1px solid #555; min-height:3em; margin:16px; line-height:1.5; padding:6px; white-space:pre-wrap; }
+</style>
+</head>
+<body>
+<div class="messagesContainer_test">
+  <div class="userMessage_test"><p id="user">This is my own prompt text.</p></div>
+  <div class="userMessage_test" id="sent" style="white-space:pre-wrap">Annotation 7:
+&gt; an earlier quote
+My comment:
+an earlier note</div>
+  <div class="message_test"><span class="root_test">
+    <p id="p1">The density is <span data-tex="p(x \mid \mu, \sigma^2) = \frac{1}{\sqrt{2\pi\sigma^2}}"></span> for <span data-tex="x \in \mathbb{R}"></span> here.</p>
+    <p id="p2">A second paragraph before the display.</p>
+    <div id="d1" data-display-tex="\sum_{k=1}^{n} k^2 = \frac{n(n+1)(2n+1)}{6}"></div>
+    <p id="p3">Closing words after the display.</p>
+  </span></div>
+  <div style="height:1500px"></div>
+</div>
+<div contenteditable="plaintext-only" role="textbox" aria-label="Message input" class="messageInput_test"></div>
+<script>
+  document.querySelectorAll('[data-tex]').forEach(function (el) {
+    katex.render(el.dataset.tex, el, { throwOnError: false });
+  });
+  document.querySelectorAll('[data-display-tex]').forEach(function (el) {
+    katex.render(el.dataset.displayTex, el, { displayMode: true, throwOnError: false });
+  });
+  // Stand-in for Claude Code's React onInput: records what the app would see.
+  window.inputEvents = [];
+  document.querySelector('[aria-label="Message input"]').addEventListener('input', function (e) {
+    window.inputEvents.push({ type: e.inputType, text: e.target.textContent });
+  });
+</script>
+<script src="../../vendor/annotate.js"></script>
+</body>
+</html>
