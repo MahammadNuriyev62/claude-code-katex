@@ -33,7 +33,8 @@
     "theme": "dark"
   },
   "activationEvents": [
-    "onStartupFinished"
+    "onStartupFinished",
+    "onUri"
   ],
   "main": "./extension.js",
   "contributes": {
@@ -78,6 +79,11 @@
           "type": "boolean",
           "default": false,
           "markdownDescription": "Experimental: render LaTeX in Claude Code's plan approval view. This requires modifying Claude Code's host `extension.js`, with a validated backup and automatic restoration when disabled or uninstalled. Changing this setting prompts you to reload the VS Code window."
+        },
+        "claudeCodeKatex.fileLinks": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "File links in Claude's replies. Hovering a file link shows its full path; right-click offers Open, Open with system app, Reveal in sidebar, Open containing folder, Copy full path and Copy link. Open shows a PDF or image in its viewer, a PDF, image or Office file that Claude Code opens as text is reopened properly, and left-clicking a folder link opens it in the file manager.\n\nTakes effect immediately (the webview reloads)."
         }
       }
     }
@@ -86,7 +92,8 @@
     "test": "jest",
     "build:parser": "esbuild node_modules/acorn/dist/acorn.js --bundle --platform=node --format=cjs --minify --legal-comments=inline --outfile=vendor/acorn.js",
     "build:bundle": "esbuild src/webview/entry.js --bundle --format=iife --minify --alias:katex=./src/webview/katex-global-shim.js --outfile=vendor/remark-math-bundle.js",
-    "vscode:uninstall": "node ./uninstall-hook.js"
+    "vscode:uninstall": "node ./uninstall-hook.js",
+    "test:links": "node test/links-harness.mjs"
   },
   "extensionDependencies": [
     "anthropic.claude-code"

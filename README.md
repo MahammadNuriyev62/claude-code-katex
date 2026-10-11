@@ -98,6 +98,29 @@ Two things KaTeX itself cannot do, so neither can this:
 - macros with an optional argument, `\newcommand{\x}[2][default]{...}`
 - `\newenvironment`
 
+## File links
+
+Turn on `"claudeCodeKatex.fileLinks": true` for more control over the file
+links in Claude's replies. Hovering a file link shows its full path. Right-click
+it for:
+
+- **Open**: PDFs and images open in their viewer (a PDF viewer extension such
+  as LaTeX Workshop, or VS Code's image preview), Office documents in your
+  system app, and text files at the linked line
+- **Open with system app**
+- **Reveal in sidebar**, for files inside the workspace
+- **Open containing folder**, in your system file manager
+- **Copy full path** and **Copy link**
+
+Claude Code opens a clicked file as text, which shows a PDF as raw bytes. With
+this setting on, a PDF, image or Office file that opens as text is closed and
+reopened in its proper viewer, and left-clicking a folder link opens the
+folder in your file manager. Web links keep Claude Code's own menu.
+
+The menu's actions go through a `vscode://` link to this extension, so the
+first one asks once whether to allow it. The handler only opens, reveals or
+shows files, and it will not hand scripts or executables to the system app.
+
 ## How it works
 
 The extension injects `remark-math` and `rehype-katex` into Claude Code's own Markdown rendering pipeline. Math is tokenized *while* Claude Code parses the Markdown — before the parser can alter it — so the LaTeX reaches KaTeX exactly as written. This is what lets backslash-heavy expressions (matrix row breaks `\\`, spacing macros `\,` `\;` `\!`, escaped braces) and multi-line environments render correctly.

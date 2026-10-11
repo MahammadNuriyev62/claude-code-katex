@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>File links harness</title>
+<link rel="stylesheet" href="../../vendor/links.css">
+<style> body { font-family: sans-serif; background:#1e1e1e; color:#ddd; } a { color:#3794ff; } </style>
+</head>
+<body>
+<div id="root"><div class="messagesContainer_test">
+  <p>See <a id="abs" href="/home/amir/repo/paper%20v2/main.pdf">main.pdf</a>,
+     <a id="rel" href="code/fit.R:12">fit.R</a> and
+     <a id="web" href="https://example.org/x">a web page</a>.</p>
+  <p>Outputs are in <a id="dir" href="/home/amir/repo/paper/figs">the figs folder</a> and
+     <a id="dirslash" href="results/">results/</a>.</p>
+</div></div>
+<script>
+  // Stand-in for Claude Code's React handlers (delegated at the app root).
+  window.claudeMenus = [];
+  document.getElementById('root').addEventListener('contextmenu', function (e) {
+    e.preventDefault(); window.claudeMenus.push(e.target.id);
+  });
+  // Claude Code's link click handler: opens the file itself and stops the
+  // event, so VS Code's forwarder never sees it.
+  window.claudeOpens = [];
+  document.getElementById('root').addEventListener('click', function (e) {
+    var a = e.target.closest('a');
+    if (a) { e.preventDefault(); e.stopPropagation(); window.claudeOpens.push(a.id); }
+  });
+  // Stand-in for VS Code's webview link forwarder (window, bubble phase,
+  // trusted clicks only).
+  window.forwarded = [];
+  window.addEventListener('click', function (e) {
+    var a = e.composedPath().find(function (n) { return n.tagName === 'A'; });
+    if (!e.isTrusted || !a) return;
+    if (/^vscode:/.test(a.href)) window.forwarded.push(a.href);
+    e.preventDefault();
+  });
+</script>
+<!-- vendor/links.js is added by the test, with its handler URI filled in. -->
+</body>
+</html>
