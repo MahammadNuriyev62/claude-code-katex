@@ -46,7 +46,7 @@ function bind(scope, pattern, value) {
 
 function collect(ast) {
   const root = { parent: null, bindings: new Map(), functionScope: true };
-  const candidates = [], writes = [];
+  const candidates = [], writes = [], functions = [];
   const nodeScopes = new WeakMap();
   const stack = [{ node: ast, scope: root, declarationKind: null }];
   while (stack.length) {
@@ -56,7 +56,9 @@ function collect(ast) {
     if (isFunction(node)) {
       scope = { parent: scope, bindings: new Map(), functionScope: true };
       if (node.type === 'FunctionExpression' && node.id) bind(scope, node.id, { node, scope });
-      for (const param of node.params) bind(scope, param, null);
+      for (const param of node.params) bind(scope, param,
+        param.type === 'Identifier' ? { node: null, scope, parameter: true } : null);
+      functions.push({ node, scope });
     } else if (['BlockStatement', 'CatchClause', 'ForStatement', 'ForInStatement', 'ForOfStatement', 'SwitchStatement'].includes(node.type)) {
       scope = { parent: scope, bindings: new Map(), functionScope: false };
       if (node.type === 'CatchClause') bind(scope, node.param, null);
@@ -85,7 +87,73 @@ function collect(ast) {
       if (s.bindings.has(write.name)) { s.bindings.set(write.name, null); break; }
     }
   }
-  return { candidates, nodeScopes };
+  return { candidates, nodeScopes, functions };
+}
+
+function memberName(node) {
+  if (node?.type !== 'MemberExpression') return null;
+  if (!node.computed && node.property.type === 'Identifier') return node.property.name;
+  return node.property.type === 'Literal' ? node.property.value : null;
+}
+
+// Identify the shared react-markdown processor, rather than assuming there is
+// only one renderer. Prove that both plugin lists come from the same parameter,
+// feed one unified .use() chain in the right order, and that exact processor is
+// parsed and run. All bindings are lexical and reassigned values are rejected.
+function markdownProcessors(functions, nodeScopes) {
+  const matches = [];
+  for (const { node: fn, scope } of functions) {
+    if (fn.params.length !== 1 || fn.params[0].type !== 'Identifier') continue;
+    const parameter = lookup(scope, fn.params[0].name);
+    if (!parameter?.parameter) continue;
+    const own = [], stack = [fn.body];
+    while (stack.length) {
+      const n = stack.pop();
+      if (isFunction(n)) continue;
+      own.push(n);
+      stack.push(...children(n));
+    }
+    const parameterProperty = n => n?.type === 'MemberExpression' &&
+      n.object.type === 'Identifier' && lookup(nodeScopes.get(n), n.object.name) === parameter
+      ? memberName(n) : null;
+    const reads = new Set(own.map(parameterProperty));
+    if (!['children', 'components', 'remarkRehypeOptions'].every(key => reads.has(key))) continue;
+    function pluginSource(n, depth = 0) {
+      if (!n || depth > 12) return null;
+      const property = parameterProperty(n);
+      if (property === 'remarkPlugins' || property === 'rehypePlugins') return property;
+      if (n.type === 'LogicalExpression' && ['||', '??'].includes(n.operator)) return pluginSource(n.left, depth + 1);
+      if (n.type === 'Identifier') {
+        const binding = lookup(nodeScopes.get(n), n.name);
+        return binding && pluginSource(binding.node, depth + 1);
+      }
+      return null;
+    }
+    for (const declaration of own.filter(n => n.type === 'VariableDeclarator' && n.id.type === 'Identifier')) {
+      const binding = lookup(nodeScopes.get(declaration), declaration.id.name);
+      if (!binding || binding.node !== declaration.init) continue;
+      const uses = [];
+      let call = declaration.init;
+      while (call?.type === 'CallExpression' && memberName(call.callee) === 'use') {
+        uses.unshift(call);
+        call = call.callee.object;
+      }
+      const plugins = uses.map((use, index) => ({ use, index, kind: pluginSource(use.arguments[0]) }));
+      const remark = plugins.filter(p => p.kind === 'remarkPlugins');
+      const rehype = plugins.filter(p => p.kind === 'rehypePlugins');
+      if (remark.length !== 1 || rehype.length !== 1 || remark[0].index + 1 >= rehype[0].index ||
+          remark[0].use.arguments.length !== 1 || rehype[0].use.arguments.length !== 1) continue;
+      const processorCalls = own.filter(n => n.type === 'CallExpression' &&
+        n.callee.type === 'MemberExpression' && n.callee.object.type === 'Identifier' &&
+        lookup(nodeScopes.get(n), n.callee.object.name) === binding);
+      const parses = processorCalls.filter(n => memberName(n.callee) === 'parse');
+      const runs = processorCalls.filter(n => memberName(n.callee) === 'runSync');
+      if (!parses.length || !runs.some(run => run.arguments[0]?.type === 'Identifier' &&
+          parses.includes(lookup(nodeScopes.get(run), run.arguments[0].name)?.node))) continue;
+      matches.push({ remark: remark[0].use.arguments[0], rehype: rehype[0].use.arguments[0] });
+    }
+  }
+  return matches;
 }
 
 function returnsPluginProps(node, scope, nodeScopes, depth = 0, called = false) {
@@ -119,16 +187,37 @@ function returnsPluginProps(node, scope, nodeScopes, depth = 0, called = false) 
   return false;
 }
 
-function injectMathPlugins(body) {
+function injectMathPlugins(body, report = () => {}) {
   if (body.includes('/* === KaTeX LaTeX Rendering Patch === */')) return null;
   let ast;
   try { ast = parse(body, { ecmaVersion: 'latest', sourceType: 'script' }); }
-  catch { return null; }
-  const { candidates, nodeScopes } = collect(ast);
+  catch (error) { report({ reason: 'invalid-javascript', message: error.message }); return null; }
+  const { candidates, nodeScopes, functions } = collect(ast);
+  const processors = markdownProcessors(functions, nodeScopes);
+  if (processors.length > 1) {
+    report({ reason: 'ambiguous-markdown-processors', count: processors.length });
+    return null;
+  }
+  if (processors.length === 1) {
+    const { remark, rehype } = processors[0];
+    const edits = [
+      { node: remark, plugins: 'window.__remarkBracketMath,window.__remarkMath' },
+      { node: rehype, plugins: 'window.__rehypeKatex' },
+    ].sort((a, b) => b.node.start - a.node.start);
+    for (const { node, plugins } of edits) {
+      const original = body.slice(node.start, node.end);
+      const replacement = `window.__KATEX_V2_LOADED?(${original}).concat(${plugins}):(${original})`;
+      body = body.slice(0, node.start) + replacement + body.slice(node.end);
+    }
+    return body;
+  }
   const matches = candidates.filter(({ props, scope }) => props.properties.some(p =>
     propertyName(p) === 'remarkPlugins' ||
     (p.type === 'SpreadElement' && returnsPluginProps(p.argument, scope, nodeScopes))));
-  if (matches.length !== 1) return null;
+  if (matches.length !== 1) {
+    report({ reason: matches.length ? 'ambiguous-markdown-props' : 'no-markdown-props', count: matches.length });
+    return null;
+  }
   const { node, props } = matches[0];
 
   // Retain the existing output for the original simple call shape. Only use

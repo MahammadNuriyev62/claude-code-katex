@@ -122,6 +122,17 @@ const cases = [
             return [kx(el) === 0 && !!code && code.textContent === '$x^2$',
                     kx(el) + ' katex, code=' + JSON.stringify(code ? code.textContent : null)]; }],
 
+  ['CODE — currency before inline dollar code stays literal', 'Inline $E=mc^2$; $5 stays a price, and `$x$` stays code.',
+    el => [kx(el) === 1 && el.textContent.includes('$5 stays a price') &&
+      el.querySelector('code')?.textContent === '$x$', el.textContent]],
+  ['CODE — currency inside code is preserved exactly', 'Literal `$5` beside $x^2$.',
+    el => [kx(el) === 1 && el.querySelector('code')?.textContent === '$5', el.textContent]],
+  ['CODE — bracket and display delimiters inside code stay literal', 'Write `\\[x\\] $$x$$` beside $y$.',
+    el => [kx(el) === 1 && el.querySelector('code')?.textContent === R`\[x\] $$x$$`, el.textContent]],
+  ['CODE — a longer backtick delimiter can contain a backtick', 'Price $5 beside `` `$x$` `` and $y$.',
+    el => [kx(el) === 1 && el.textContent.includes('Price $5') &&
+      el.querySelector('code')?.textContent === '`$x$`', el.textContent]],
+
   ['EDGE 17 — currency vs math on one line', R`An espresso is $4 and lunch is $15, but $a^2+b^2=c^2$ is real math.`,
     el => [kx(el) === 1 && el.textContent.includes('$4') && el.textContent.includes('$15'),
            kx(el) + ' katex (want 1), text=' + JSON.stringify(el.textContent)]],

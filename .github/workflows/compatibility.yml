@@ -6,7 +6,7 @@ on:
   pull_request:
   workflow_dispatch:
   schedule:
-    - cron: '17 5 * * *'
+    - cron: '17 */6 * * *'
 
 permissions:
   contents: read
@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        claude: ${{ fromJSON(github.event_name == 'schedule' && '["latest"]' || '["2.1.288","2.1.296","latest"]') }}
+        claude: ${{ fromJSON(github.event_name == 'schedule' && '["latest"]' || '["2.1.288","2.1.296","2.1.299","latest"]') }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -41,7 +41,7 @@ jobs:
           mkdir -p test-results
           docker run --rm -v "$PWD/test-results:/app/test-results" katex-compatibility macros
       - name: Published extension against latest Claude Code
-        if: always() && matrix.claude == 'latest' && steps.build.outcome == 'success'
+        if: always() && github.event_name != 'pull_request' && matrix.claude == 'latest' && steps.build.outcome == 'success'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

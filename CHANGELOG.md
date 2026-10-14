@@ -1,5 +1,22 @@
 # Changelog
 
+## [2.1.5] - 2026-10-14
+
+### Fixed
+- Support Claude Code 2.1.299, which adds another Markdown renderer. Inject
+  math into the shared Markdown processor so all its renderers receive the
+  same plugins, preserving existing plugin lists and load-failure behavior.
+- Report structural patch rejection reasons in the extension logs.
+- Keep prices literal beside inline code and preserve LaTeX delimiters inside
+  code spans during math normalization.
+
+### Improved
+- Cover multiple renderers, missing caller plugin props, compiler variations,
+  scoped aliases, getters, and ambiguous processors in regression tests.
+- Check upstream compatibility every six hours and pin 2.1.299 in the CI
+  matrix. Published VSIX probes run on main and scheduled/manual checks;
+  pull requests test their own code independently of the deployed version.
+
 ## [2.1.4] - 2026-10-11
 
 ### Improved

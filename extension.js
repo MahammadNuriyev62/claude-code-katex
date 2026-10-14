@@ -536,7 +536,9 @@ function applyPatch(extDir, vendorDir, macroPayload, originalBody) {
 
   const currentBody = fs.readFileSync(jsPath, 'utf8');
   const body = originalBody === undefined ? currentBody : originalBody;
-  const injectedBody = injectMathPlugins(body);
+  const injectedBody = injectMathPlugins(body, diagnostic => {
+    console.warn('[Claude Code LaTeX] Markdown patch rejected:', diagnostic);
+  });
   if (injectedBody === null) {
     // The injection point is gone — leave the webview completely untouched.
     return false;

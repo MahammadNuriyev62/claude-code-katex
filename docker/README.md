@@ -14,13 +14,14 @@ against a hand-maintained remote VS Code.
 
 ## Build
 
-The GitHub `Claude Code compatibility` workflow checks pinned versions 2.1.288
-and 2.1.296 plus the latest available Open VSX version on pull requests, pushes
+The GitHub `Claude Code compatibility` workflow checks pinned versions 2.1.288,
+2.1.296, and 2.1.299 plus the latest available Open VSX version on pull requests, pushes
 to main, and manual runs. Each version runs activation and real-webview probes;
 the latest also runs unit and browser regression tests. No account token is
-needed. It also runs daily at 05:17 UTC against the latest Claude Code, testing
+needed. It also runs every six hours at 00:17, 06:17, 12:17, and 18:17 UTC against the latest Claude Code, testing
 both the current source and the latest published GitHub release VSIX. The
-published probe still runs if a source regression fails. A clean runner fetches
+published probe still runs if a source regression fails. Pull requests skip the
+published probe, since changes to a PR cannot fix the deployed VSIX. A clean runner fetches
 upstream afresh, and failed runs retain browser evidence. Scheduled runs require
 the workflow to be on the repository's default branch.
 

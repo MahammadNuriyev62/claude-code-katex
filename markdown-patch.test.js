@@ -1,6 +1,91 @@
 const vm = require('vm');
 const { injectMathPlugins } = require('./markdown-patch');
 
+const SHARED_MARKDOWN = `function M(p){
+  const children=p.children,components=p.components,options=p.remarkRehypeOptions;
+  const remark=p.remarkPlugins||[],rehype=p.rehypePlugins||[];
+  const processor=unified().use(parser).use(remark).use(bridge,options).use(rehype);
+  const parsed=processor.parse(children);return processor.runSync(parsed);
+}`;
+
+function evaluateProcessor(source, loaded = true) {
+  const patched = injectMathPlugins(source);
+  expect(patched).not.toBeNull();
+  const context = { window: { __KATEX_V2_LOADED: loaded, __rehypeKatex: 'katex',
+    __remarkBracketMath: 'brackets', __remarkMath: 'math' },
+    parser: 'parser', bridge: 'bridge', F: (component, props) => component(props),
+    gfm: 'gfm', extra: 'extra', existing: 'existing', calls: 0,
+    unified: () => {
+      const plugins = [];
+      return {
+        use(value) { plugins.push(...(Array.isArray(value) ? value : [value])); return this; },
+        parse(value) { return { value }; },
+        runSync(tree) { return { ...tree, plugins }; },
+      };
+    } };
+  vm.runInNewContext(patched, context);
+  return context;
+}
+
+test('one shared processor covers independently added renderers without patching their props', () => {
+  const renderers = 'var first=F(M,{remarkPlugins:[gfm],components:{},children:"first"});' +
+    'function helper(){calls++;return {remarkPlugins:[extra],rehypePlugins:[existing]}};' +
+    'var second=F(M,{...helper(),components:{},children:"second"});' +
+    'var third=F(M,{children:"third"});';
+  const patched = injectMathPlugins(SHARED_MARKDOWN + renderers);
+  expect(patched.endsWith(renderers)).toBe(true);
+  const c = evaluateProcessor(SHARED_MARKDOWN + renderers);
+  expect(Array.from(c.first.plugins)).toEqual(['parser', 'gfm', 'brackets', 'math', 'bridge', 'katex']);
+  expect(Array.from(c.second.plugins)).toEqual(['parser', 'extra', 'brackets', 'math', 'bridge', 'existing', 'katex']);
+  expect(Array.from(c.third.plugins)).toEqual(['parser', 'brackets', 'math', 'bridge', 'katex']);
+  expect(c.first.value).toBe('first');
+  expect(c.second.value).toBe('second');
+  expect(c.third.value).toBe('third');
+  expect(c.calls).toBe(1);
+});
+
+test.each([
+  SHARED_MARKDOWN.replace('function M(p)', 'const M=(p)=>').replace(/}$/, '};'),
+  SHARED_MARKDOWN.replace(/p\.remarkPlugins/g, 'p["remarkPlugins"]').replace(/p\.rehypePlugins/g, 'p["rehypePlugins"]'),
+  SHARED_MARKDOWN.replace(/\|\|/g, '??'),
+  SHARED_MARKDOWN.replace('.use(remark)', '.use(p.remarkPlugins||[])').replace('.use(rehype)', '.use(p.rehypePlugins||[])'),
+  SHARED_MARKDOWN.replace('const processor=', 'const alias=remark,htmlAlias=rehype;const processor=').replace('.use(remark)', '.use(alias)').replace('.use(rehype)', '.use(htmlAlias)'),
+])('recognizes compiler variations in the shared processor', processor => {
+  const c = evaluateProcessor(processor + ';var result=M({remarkPlugins:[gfm],children:"text"});');
+  expect(Array.from(c.result.plugins)).toEqual(['parser', 'gfm', 'brackets', 'math', 'bridge', 'katex']);
+});
+
+test.each([true, false])('shared processor preserves frozen props, arrays, getter counts and fallback: %s', loaded => {
+  const c = evaluateProcessor(SHARED_MARKDOWN + `
+    var original=Object.freeze([gfm]);
+    var props=Object.freeze({get remarkPlugins(){calls++;return original},children:'text'});
+    var result=M(props);`, loaded);
+  expect(Array.from(c.result.plugins)).toEqual(loaded
+    ? ['parser', 'gfm', 'brackets', 'math', 'bridge', 'katex'] : ['parser', 'gfm', 'bridge']);
+  expect(Array.from(c.original)).toEqual(['gfm']);
+  expect(c.calls).toBe(1);
+  expect(c.props.rehypePlugins).toBeUndefined();
+});
+
+test.each([
+  SHARED_MARKDOWN.replace('.use(bridge,options).use(rehype)', '.use(rehype).use(bridge,options)'),
+  SHARED_MARKDOWN.replace('return processor.runSync(parsed)', 'return unrelated.runSync(parsed)'),
+  SHARED_MARKDOWN.replace('processor.parse(children)', 'unrelated.parse(children)'),
+  SHARED_MARKDOWN.replace('const processor=', 'p=unknown;const processor='),
+  SHARED_MARKDOWN.replace('const remark=', 'let remark=').replace('const processor=', 'remark=unknown;const processor='),
+  SHARED_MARKDOWN.replace('const parsed=', 'processor=unknown;const parsed='),
+  SHARED_MARKDOWN.replace('const children=', '{let p=unknown;const children=').replace(/}$/, '}}'),
+  SHARED_MARKDOWN + SHARED_MARKDOWN.replace(/\bM\b/g, 'Other'),
+])('refuses ambiguous processors and unproven plugin or processor bindings', source => {
+  expect(injectMathPlugins(source)).toBeNull();
+});
+
+test('reports why a patch was rejected without including bundle contents', () => {
+  const reports = [];
+  expect(injectMathPlugins('F(M,{remarkPlugins:[],components:{}});F(M,{remarkPlugins:[],components:{}});', d => reports.push(d))).toBeNull();
+  expect(reports).toEqual([{ reason: 'ambiguous-markdown-props', count: 2 }]);
+});
+
 function evaluate(source, loaded = true) {
   const patched = injectMathPlugins(source);
   expect(patched).not.toBeNull();

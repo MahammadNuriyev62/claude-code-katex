@@ -11,8 +11,16 @@ The extension injects a math pipeline into Claude Code's own react-markdown
 plugin chain, so math is tokenized *during* Markdown parsing — verbatim —
 instead of being repaired in the DOM afterward.
 
-- `applyPatch` (in `extension.js`) locates Claude Code's single react-markdown
-  call with `injectMathPlugins` in `markdown-patch.js`. Vendored Acorn parses
+- `applyPatch` (in `extension.js`) locates the shared react-markdown processor
+  with `injectMathPlugins` in `markdown-patch.js`. Acorn proves that plugin lists
+  come from the same props parameter, enter one unified `.use()` chain in the
+  correct order, and that exact processor parses and runs the Markdown. Injecting
+  into the two `.use()` arguments covers every renderer, including callers with
+  no plugin props. Getter reads stay unchanged; plugin arrays are copied with
+  `concat`, and the original arguments remain when bundle loading fails.
+  Multiple proven processors are rejected rather than guessed.
+  A fallback for older or isolated call shapes retains the existing output.
+  Vendored Acorn parses
   JavaScript structure, accepting direct plugin props and helper-props spreads
   regardless of minified names, whitespace, comments, or property order.
   Helper definitions are resolved within their lexical scope; reassigned or
@@ -22,7 +30,8 @@ instead of being repaired in the DOM afterward.
   so a bundle-load failure cannot break Claude Code's Markdown.
   The spread form evaluates the original helper once and preserves its plugins
   and URL transform, including the Windows file-link plugin. Multiple candidate
-  call sites are rejected as unsupported.
+  fallback call sites are rejected as unsupported. Structural rejection reasons
+  are logged so compatibility failures can be diagnosed without guesswork.
 - The complete patched JavaScript must compile before any files change. All
   assets are read first, then backups, fonts, CSS, and JS are staged and replaced
   with per-file renames. Ordinary write failures roll back prior replacements;
