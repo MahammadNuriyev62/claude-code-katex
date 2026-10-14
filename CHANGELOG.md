@@ -7,6 +7,8 @@
   math into the shared Markdown processor so all its renderers receive the
   same plugins, preserving existing plugin lists and load-failure behavior.
 - Report structural patch rejection reasons in the extension logs.
+- Keep prices literal beside inline code and preserve LaTeX delimiters inside
+  code spans during math normalization.
 
 ### Improved
 - Cover multiple renderers, missing caller plugin props, compiler variations,

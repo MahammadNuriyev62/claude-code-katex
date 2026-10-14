@@ -137,6 +137,32 @@ function explodeDisplayMath(line) {
 // \(...\) (inline). Those delimiters are NOT recoverable after micromark runs
 // (`\[` -> `[`), so we normalise them on the raw markdown string, before the
 // parser sees it, by wrapping the parser. Fenced code blocks are left alone.
+function protectInlineCode(line) {
+  let prefix = '\uE000KATEXCODE';
+  while (line.includes(prefix)) prefix += 'X';
+  const spans = [], runs = [...line.matchAll(/`+/g)];
+  let out = '', position = 0;
+  for (let i = 0; i < runs.length; i++) {
+    const opening = runs[i];
+    let slashes = 0;
+    for (let j = opening.index - 1; j >= 0 && line[j] === '\\'; j--) slashes++;
+    if (slashes % 2) continue;
+    const closingIndex = runs.findIndex((run, j) => j > i && run[0].length === opening[0].length);
+    if (closingIndex === -1) continue;
+    const closing = runs[closingIndex], end = closing.index + closing[0].length;
+    const marker = prefix + spans.length + '\uE001';
+    spans.push({ marker, source: line.slice(opening.index, end) });
+    out += line.slice(position, opening.index) + marker;
+    position = end;
+    i = closingIndex;
+  }
+  out += line.slice(position);
+  return { text: out, restore: text => {
+    for (const span of spans) text = text.replace(span.marker, () => span.source);
+    return text;
+  } };
+}
+
 function normalizeMathDelims(src) {
   if (typeof src !== 'string') return src;
   if (src.indexOf('\\') === -1 && src.indexOf('$') === -1) return src;
@@ -151,7 +177,11 @@ function normalizeMathDelims(src) {
       continue;
     }
     if (inFence) continue;
-    let line = escapeCurrencyDollars(lines[i])
+    // Dollars and LaTeX commands inside code must never participate in a math
+    // pair with surrounding prose (e.g. a price followed by `$x$`). Restore
+    // exact code bytes only after every normalization pass has finished.
+    const code = protectInlineCode(lines[i]);
+    let line = escapeCurrencyDollars(code.text)
       // \[ \] -> $$ (display); \( \) -> $ (inline). The (?<!\\) guard keeps
       // amsmath row separators (`\\[6pt]`, `\\[1em]`, ...) from having their
       // `[` consumed: without it, `\\[6pt]` becomes `\$$6pt]` and the math
@@ -171,7 +201,7 @@ function normalizeMathDelims(src) {
     // Move display math onto its own block lines (flow/display mode) — needed so
     // KaTeX `\tag` works (it is display-only) and so display equations render as
     // centered blocks, in every context: whole-line, mid-sentence, or a list item.
-    lines[i] = explodeDisplayMath(line).join('\n');
+    lines[i] = code.restore(explodeDisplayMath(line).join('\n'));
   }
   return lines.join('\n');
 }
