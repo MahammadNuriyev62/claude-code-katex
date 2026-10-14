@@ -16,6 +16,7 @@ src/**
 test/**
 docs/**
 CLAUDE.md
+AGENTS.md
 claude-code-latex-demo.gif
 claude-code-latex-demo.mp4
 _*.js
