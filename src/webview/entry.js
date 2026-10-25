@@ -103,7 +103,12 @@ function explodeDisplayMath(line) {
     let m = line.match(/^(\s*)\$\$(.+)$/);
     if (m && m[2].trim() !== '' && m[2].indexOf('$$') === -1) return [m[1] + '$$', m[1] + m[2]];
     m = line.match(/^(.+)\$\$\s*$/);
-    if (m && m[1].trim() !== '' && m[1].indexOf('$$') === -1) return [m[1], '$$'];
+    if (m && m[1].trim() !== '' && m[1].indexOf('$$') === -1) {
+      // Keep a multiline display's closing fence in its list/container. A
+      // dedented fence can swallow the following list item as equation text.
+      const indent = m[1].match(/^\s*/)[0];
+      return [m[1], indent + '$$'];
+    }
     return [line];
   }
 

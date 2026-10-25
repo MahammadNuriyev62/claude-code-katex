@@ -1,5 +1,15 @@
 # Changelog
 
+## [2.1.6] - 2026-10-25
+
+- Prevent Claude Code's native math pipeline from running alongside the
+  extension's pipeline (issue #24). Preserve the original native decision if
+  the injected runtime fails to load; disabling the extension restores upstream.
+- Preserve closing-fence indentation for multiline display math inside lists.
+- Add real desktop VS Code CI with packaged VSIXs and Claude Code's actual chat
+  component: native feature gates, long messages, streaming, tables, code, source
+  reveal, trusted copying, light/dark themes, and restoration on disable.
+
 ## [2.1.5] - 2026-10-14
 
 ### Fixed

@@ -1,5 +1,20 @@
 # Containerized test environment
 
+The workflow also runs **desktop Microsoft VS Code** under Xvfb on Linux,
+independently of these containers. It installs a packaged VSIX and the official
+Claude Code extension, then tests the original chat renderer with deterministic
+fixtures and native math gates. See `test/vscode/run.js` and `CLAUDE.md`.
+This covers source/published packages, long/streamed messages, tall inline math,
+tables/lists/code, source reveal, trusted copying, real themes and disable/restore.
+It uses no account; authenticated live replies remain a separate release check.
+
+To run desktop checks locally after packaging the candidate:
+
+```sh
+CLAUDE_VERSION=2.1.310 EXTENSION_VSIX_PATH=claude-code-katex-2.1.6.vsix npm run test:vscode
+# Linux without a display: prefix the command with xvfb-run -a.
+```
+
 One image runs all three test levels reproducibly — no host setup beyond Docker,
 and no dependence on any cloud workspace. This is the replacement for testing
 against a hand-maintained remote VS Code.

@@ -63,3 +63,56 @@ jobs:
           name: compatibility-${{ matrix.claude }}
           path: test-results/
           if-no-files-found: ignore
+
+  desktop-vscode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        claude: ${{ fromJSON(github.event_name == 'schedule' && '["latest"]' || '["2.1.299","2.1.301","latest"]') }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+      - name: Install desktop test dependencies
+        run: |
+          npm ci
+          sudo apt-get update
+          sudo apt-get install -y xvfb libgtk-3-0 libnss3 libasound2t64
+      - name: Package candidate
+        id: package
+        run: |
+          npm run build:bundle
+          npm run build:parser
+          mkdir -p test-results/desktop
+          npx --yes @vscode/vsce package --out test-results/desktop/candidate.vsix
+      - name: Real desktop VS Code chat rendering
+        env:
+          CLAUDE_VERSION: ${{ matrix.claude }}
+          EXTENSION_VSIX_PATH: test-results/desktop/candidate.vsix
+          TEST_RESULTS_DIR: test-results/desktop/source
+        run: xvfb-run -a npm run test:vscode
+      - name: Published VSIX in desktop VS Code
+        if: always() && github.event_name != 'pull_request' && matrix.claude == 'latest' && steps.package.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CLAUDE_VERSION: latest
+          EXTENSION_VSIX_PATH: test-results/desktop/published.vsix
+          TEST_RESULTS_DIR: test-results/desktop/published
+        run: |
+          gh release view --repo "$GITHUB_REPOSITORY" --json tagName,assets > test-results/desktop/release.json
+          url=$(jq -er '[.assets[] | select(.name | endswith(".vsix"))] | if length == 1 then .[0].url else error("Expected one published VSIX") end' test-results/desktop/release.json)
+          curl --fail --location --retry 3 "$url" -o "$EXTENSION_VSIX_PATH"
+          xvfb-run -a npm run test:vscode
+      - name: Preserve desktop evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: desktop-vscode-${{ matrix.claude }}
+          path: test-results/desktop/
+          if-no-files-found: ignore
