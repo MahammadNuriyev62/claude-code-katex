@@ -16,7 +16,12 @@ function activate(context) {
     }
     try {
       const { command, theme } = JSON.parse(Buffer.concat(chunks).toString() || '{}');
-      if (theme && ['Default Dark Modern', 'Default Light Modern'].includes(theme)) {
+      if (command === 'paste') {
+        const document = await vscode.workspace.openTextDocument({ language: 'latex' });
+        await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside });
+        await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+        response.writeHead(200).end(JSON.stringify({ pasted: document.getText() })); return;
+      } else if (theme && ['Default Dark Modern', 'Default Light Modern'].includes(theme)) {
         await vscode.workspace.getConfiguration('workbench').update('colorTheme', theme, vscode.ConfigurationTarget.Global);
       } else if (allowed.has(command)) {
         if (command === 'workbench.action.reloadWindow') {

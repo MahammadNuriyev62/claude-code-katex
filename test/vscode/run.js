@@ -92,7 +92,7 @@ async function upstream(temp) {
   const control = async body => {
     const response = await fetch(`http://127.0.0.1:${driverPort}`, { method: 'POST', headers: { authorization: 'Bearer ' + env.KATEX_TEST_DRIVER_TOKEN }, body: JSON.stringify(body) });
     if (!response.ok) throw new Error('VS Code test driver: ' + await response.text());
-    return true;
+    return response.json();
   };
   const log = fs.openSync(path.join(out, 'vscode.log'), 'a');
   const app = spawn(executable, [...cliArgs, '--extensionDevelopmentPath=' + path.join(__dirname, 'driver'), '--remote-debugging-port=' + port, '--skip-welcome', '--skip-release-notes', '--disable-workspace-trust', '--new-window', workspace], { env, stdio: ['ignore', log, log] });
@@ -177,6 +177,9 @@ async function upstream(temp) {
       await page.keyboard.press(`${metaKey}+c`);
       const copied = await poll(() => frame.evaluate(() => window.__KATEX_COPY_PROBE), 'trusted keyboard copy');
       check(copied.trusted && copied.text.includes('$E=mc^2$') && copied.text.includes('$$' + tex + '$$'), 'trusted copy preserves inline and display LaTeX', copied);
+      const { pasted } = await control({ command: 'paste' });
+      check(pasted.replace(/\r\n/g, '\n') === copied.text.replace(/\r\n/g, '\n'), 'native VS Code editor pastes the copied source exactly');
+      await page.screenshot({ path: path.join(out, 'copied-source.png') });
       await control({ theme: 'Default Light Modern' });
       await poll(() => frame.evaluate(() => document.body.classList.contains('vscode-light')), 'real VS Code light theme');
       await page.screenshot({ path: path.join(out, 'rendered-light.png') });
