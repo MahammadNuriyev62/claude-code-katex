@@ -54,6 +54,20 @@ const syntheticCopy = node => {
 
 // [name, markdown, predicate(renderEl) -> [ok, detail]]
 const cases = [
+  ['ISSUE#24 — adjacent display/inline lines preserve both equations', '$$x$$\n$y$',
+    el => [kx(el) === 2 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
+  ['ISSUE#24 — consecutive display lines followed by inline math', '$$x$$\n$$y$$\n$z$',
+    el => [kx(el) === 3 && err(el) === 0, kx(el) + ' katex, ' + err(el) + ' err']],
+  ['ISSUE#24 — multiline display retains list indentation and the following item', R`1. Matrix:
+
+   $$\begin{pmatrix}
+   1&2\\
+   3&4
+   \end{pmatrix}$$
+
+2. Inline $\frac12$.`,
+    el => [kx(el) === 2 && err(el) === 0 && el.querySelectorAll('ol > li').length === 2,
+      kx(el) + ' katex, ' + err(el) + ' err']],
   // ============ CRAZY: heavy KaTeX through the real pipeline ============
   ['CRAZY 1 — Maxwell equations, 4-row aligned', R`$$\begin{aligned}
 \nabla\cdot\mathbf{E} &= \frac{\rho}{\varepsilon_0} \\

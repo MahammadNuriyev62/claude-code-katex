@@ -19,6 +19,12 @@ instead of being repaired in the DOM afterward.
   no plugin props. Getter reads stay unchanged; plugin arrays are copied with
   `concat`, and the original arguments remain when bundle loading fails.
   Multiple proven processors are rejected rather than guessed.
+  On upstream builds with native math, the uniquely identified
+  `mathRenderingEnabled` getter is guarded so only one pipeline owns the source.
+  The full original getter body remains unchanged and runs whenever
+  `__KATEX_V2_LOADED` is absent/false. This matters because native math tokenizers
+  retain original-source offsets while our normalization can add line breaks.
+  An unknown or ambiguous native gate rejects the entire patch.
   A fallback for older or isolated call shapes retains the existing output.
   Vendored Acorn parses
   JavaScript structure, accepting direct plugin props and helper-props spreads
@@ -205,7 +211,37 @@ build), and `playwright`.
 
 ## Testing
 
-All three test levels run inside one reproducible Docker image — no
+### Desktop VS Code regression tests (no account)
+
+`npm run test:vscode` installs the candidate VSIX and the official Claude Code
+extension in a temporary desktop VS Code profile. `@vscode/test-electron`
+downloads Microsoft's stable Electron build; Playwright drives that real app.
+The existing installed app can be selected with `VSCODE_EXECUTABLE`.
+
+The test-only adapter in `test/vscode/chat-probe.js` structurally finds the
+original upstream chat Markdown component, JSX/root factories, error boundary,
+and native feature-gate getter. It supplies deterministic fixture messages to
+that component inside Claude's real webview, including the exact #24 crash,
+long tables/math, streamed prefixes, tall inline formulas, and lists. Unknown
+adapter layouts fail instead of silently dropping coverage. No replacement
+Markdown renderer or minified function names are used. The adapter and a small
+VS Code API driver are excluded from the packaged extension.
+
+Native fallback, exclusive pipeline ownership, source controls, trusted copying,
+real VS Code themes and original-byte restoration on disable are checked too.
+Reports record the tested upstream, VS Code and extension versions plus the
+VSIX path/hash; captures are explicitly labelled deterministic fixtures.
+These are full chat-renderer tests, **not authenticated Claude replies**. Keep
+the separate live-response test and manual visual verification for releases.
+
+CI runs desktop tests on pinned pre-native 2.1.299, first-native 2.1.301 and latest
+Claude Code (scheduled runs: latest only), with source and published VSIX probes.
+The downloader pins the version resolved from Open VSX's platform metadata and
+verifies its checksum, avoiding a stale gallery search selecting an older build.
+
+### Container suite
+
+The existing three test levels run inside one reproducible Docker image — no
 hand-maintained remote VS Code, no machine-specific setup. This is the canonical
 way to test, and the way a contributor verifies a fix. Full details:
 [`docker/README.md`](docker/README.md).

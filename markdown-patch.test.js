@@ -86,6 +86,78 @@ test('reports why a patch was rejected without including bundle contents', () =>
   expect(reports).toEqual([{ reason: 'ambiguous-markdown-props', count: 2 }]);
 });
 
+test.each([true, false])('native math ownership follows runtime availability: %s', loaded => {
+  const source = SHARED_MARKDOWN + `
+    class Native {
+      get mathRenderingEnabled(){return this.config.experimentGates.tengu_vscode_math_rendering!==false}
+    }
+    var context=new Native();context.config={experimentGates:{}};
+    var originalDecision=context.mathRenderingEnabled;
+    context.config.experimentGates.tengu_vscode_math_rendering=false;
+    var disabledDecision=context.mathRenderingEnabled;
+    var result=M({remarkPlugins:[gfm],children:'$x$'});`;
+  const c = evaluateProcessor(source, loaded);
+  expect(c.originalDecision).toBe(loaded ? false : true);
+  expect(c.disabledDecision).toBe(false);
+  expect(Array.from(c.result.plugins)).toEqual(loaded
+    ? ['parser', 'gfm', 'brackets', 'math', 'bridge', 'katex'] : ['parser', 'gfm', 'bridge']);
+});
+
+test('native gate preserves its receiver and all original behavior after runtime failure or shutdown', () => {
+  const c = evaluateProcessor(SHARED_MARKDOWN + `
+    class N {get ['mathRenderingEnabled'](){return this.read()}}
+    var native=new N();native.read=()=>{calls++;return 'native-decision'};
+    var active=native.mathRenderingEnabled;
+    window.__KATEX_V2_LOADED=false;
+    var fallback=native.mathRenderingEnabled;
+    window.__KATEX_V2_LOADED=true;
+    var activeAgain=native.mathRenderingEnabled;`);
+  expect(c.active).toBe(false);
+  expect(c.activeAgain).toBe(false);
+  expect(c.fallback).toBe('native-decision');
+  expect(c.calls).toBe(1);
+});
+
+test('missing runtime preserves a multi-statement native getter without changing its side effects', () => {
+  const c = evaluateProcessor(SHARED_MARKDOWN + `
+    delete window.__KATEX_V2_LOADED;
+    class N {get mathRenderingEnabled(){calls++;if(this.disabled)return false;return true}}
+    var native=new N(),enabled=native.mathRenderingEnabled;
+    native.disabled=true;var disabled=native.mathRenderingEnabled;
+    var result=M({remarkPlugins:[gfm],children:'text'});`);
+  expect(c.enabled).toBe(true);
+  expect(c.disabled).toBe(false);
+  expect(c.calls).toBe(2);
+  expect(Array.from(c.result.plugins)).toEqual(['parser', 'gfm', 'bridge']);
+});
+
+test.each([
+  'var n={get mathRenderingEnabled(){return true}};',
+  'class Minified {get mathRenderingEnabled ( ) { /* retain upstream */ return flag??true; }}',
+  'class Expanded {get mathRenderingEnabled(){const enabled=this.config.enabled;if(!enabled)return false;return this.isAllowed()}}',
+])('supports native gate compiler layouts without minified names: %s', gate => {
+  expect(injectMathPlugins(gate + SHARED_MARKDOWN)).toContain('if(window.__KATEX_V2_LOADED)return false;');
+  expect(injectMathPlugins(SHARED_MARKDOWN + gate)).toContain('if(window.__KATEX_V2_LOADED)return false;');
+});
+
+test.each([
+  'class N {mathRenderingEnabled(){return true}}',
+  'class N {static get mathRenderingEnabled(){return true}}',
+  'class N {get mathRenderingEnabled(){return true}} class Other {get mathRenderingEnabled(){return false}}',
+  'function newLayout(){return config.experimentGates.tengu_vscode_math_rendering!==false}',
+])('rejects unproven native math ownership without applying a partial patch: %s', gate => {
+  const reports = [];
+  expect(injectMathPlugins(SHARED_MARKDOWN + gate, r => reports.push(r))).toBeNull();
+  expect(reports[0].reason).toBe('unsupported-native-math-gate');
+});
+
+test('native gate names inside strings and comments are not rewritten', () => {
+  const decoy = 'class N {get mathRenderingEnabled(){return true}}';
+  const suffix = `;var doc=${JSON.stringify(decoy)};/* ${decoy} */`;
+  expect(injectMathPlugins(SHARED_MARKDOWN + suffix)).toContain(suffix);
+  expect(injectMathPlugins(SHARED_MARKDOWN + suffix)).not.toContain('if(window.__KATEX_V2_LOADED)return false;');
+});
+
 function evaluate(source, loaded = true) {
   const patched = injectMathPlugins(source);
   expect(patched).not.toBeNull();

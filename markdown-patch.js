@@ -96,6 +96,40 @@ function memberName(node) {
   return node.property.type === 'Literal' ? node.property.value : null;
 }
 
+// Native and injected math parsers must not own the same source. In particular,
+// native tokenizers retain offsets into the original Markdown while our parser
+// normalizes delimiters and line breaks. Preserve the complete native decision
+// whenever our runtime did not load; disable it only while our renderer owns it.
+function nativeMathEdits(ast, report) {
+  const getters = [], references = [], stack = [ast];
+  while (stack.length) {
+    const node = stack.pop();
+    const key = node.key && (!node.computed && node.key.type === 'Identifier'
+      ? node.key.name : node.key.type === 'Literal' ? node.key.value : null);
+    if (['MethodDefinition', 'Property'].includes(node.type) && key === 'mathRenderingEnabled') getters.push(node);
+    if (memberName(node) === 'tengu_vscode_math_rendering') references.push(node);
+    stack.push(...children(node));
+  }
+  if (!getters.length && !references.length) return [];
+  if (getters.length !== 1 || getters[0].kind !== 'get' || getters[0].static ||
+      getters[0].value.params.length !== 0 || getters[0].value.body.type !== 'BlockStatement') {
+    report({ reason: 'unsupported-native-math-gate', count: getters.length });
+    return null;
+  }
+  const start = getters[0].value.body.start + 1;
+  return [{ node: { start, end: start }, replacement: 'if(window.__KATEX_V2_LOADED)return false;' }];
+}
+
+function rewrite(body, edits) {
+  let boundary = body.length;
+  for (const { node, replacement } of edits.sort((a, b) => b.node.start - a.node.start)) {
+    if (node.end > boundary) return null;
+    body = body.slice(0, node.start) + replacement + body.slice(node.end);
+    boundary = node.start;
+  }
+  return body;
+}
+
 // Identify the shared react-markdown processor, rather than assuming there is
 // only one renderer. Prove that both plugin lists come from the same parameter,
 // feed one unified .use() chain in the right order, and that exact processor is
@@ -192,6 +226,8 @@ function injectMathPlugins(body, report = () => {}) {
   let ast;
   try { ast = parse(body, { ecmaVersion: 'latest', sourceType: 'script' }); }
   catch (error) { report({ reason: 'invalid-javascript', message: error.message }); return null; }
+  const nativeEdits = nativeMathEdits(ast, report);
+  if (nativeEdits === null) return null;
   const { candidates, nodeScopes, functions } = collect(ast);
   const processors = markdownProcessors(functions, nodeScopes);
   if (processors.length > 1) {
@@ -203,13 +239,12 @@ function injectMathPlugins(body, report = () => {}) {
     const edits = [
       { node: remark, plugins: 'window.__remarkBracketMath,window.__remarkMath' },
       { node: rehype, plugins: 'window.__rehypeKatex' },
-    ].sort((a, b) => b.node.start - a.node.start);
+    ];
     for (const { node, plugins } of edits) {
       const original = body.slice(node.start, node.end);
-      const replacement = `window.__KATEX_V2_LOADED?(${original}).concat(${plugins}):(${original})`;
-      body = body.slice(0, node.start) + replacement + body.slice(node.end);
+      nativeEdits.push({ node, replacement: `window.__KATEX_V2_LOADED?(${original}).concat(${plugins}):(${original})` });
     }
-    return body;
+    return rewrite(body, nativeEdits);
   }
   const matches = candidates.filter(({ props, scope }) => props.properties.some(p =>
     propertyName(p) === 'remarkPlugins' ||
@@ -231,7 +266,7 @@ function injectMathPlugins(body, report = () => {}) {
       const patched = call.replace(V2_INJECT_RE,
         '$1($2,{rehypePlugins:window.__KATEX_V2_LOADED?[window.__rehypeKatex]:[],' +
         'remarkPlugins:[$3].concat(window.__KATEX_V2_LOADED?[window.__remarkBracketMath,window.__remarkMath]:[])');
-      return body.slice(0, node.start) + patched + body.slice(node.end);
+      return rewrite(body, [...nativeEdits, { node, replacement: patched }]);
     }
   }
   // Evaluate the entire original props expression once. This preserves helper
@@ -242,7 +277,7 @@ function injectMathPlugins(body, report = () => {}) {
     'q.rehypePlugins=(q.rehypePlugins||[]).concat(window.__rehypeKatex);' +
     'q.remarkPlugins=(q.remarkPlugins||[]).concat(window.__remarkBracketMath,window.__remarkMath);' +
     `return q})(${original})`;
-  return body.slice(0, props.start) + replacement + body.slice(props.end);
+  return rewrite(body, [...nativeEdits, { node: props, replacement }]);
 }
 
 module.exports = { injectMathPlugins, V2_INJECT_RE };
