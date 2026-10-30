@@ -62,6 +62,7 @@ async function upstream(temp) {
     'extensions.autoCheckUpdates': false, 'update.mode': 'none',
     'telemetry.telemetryLevel': 'off', 'workbench.startupEditor': 'none',
     'workbench.colorTheme': 'Default Dark Modern',
+    'editor.wordWrap': 'on',
   }));
   const executable = process.env.VSCODE_EXECUTABLE || await downloadAndUnzipVSCode({ version: process.env.VSCODE_VERSION || 'stable', cachePath: path.join(os.tmpdir(), 'katex-vscode-download') });
   const [cli] = resolveCliArgsFromVSCodeExecutablePath(executable);
@@ -113,6 +114,7 @@ async function upstream(temp) {
     await poll(() => control({ command: 'ready' }), 'VS Code extension API driver');
     await control({ command: 'workbench.action.reloadWindow' }); await pause(3500);
     await poll(() => control({ command: 'ready' }), 'reloaded VS Code extension host');
+    await control({ command: 'workbench.action.closeAuxiliaryBar' });
     await control({ command: 'claude-vscode.primaryEditor.open' });
     frame = await poll(async () => {
       const candidates = [];
@@ -146,6 +148,7 @@ async function upstream(temp) {
       check(!s.crashed && !s.errors && s.count === test.count && (!test.tables || s.tables === test.tables) &&
         (!test.text || test.text.every(t => s.text.includes(t))) && (!test.code || s.code.includes(test.code)),
       `${test.name} (${streaming || 'complete'})`, s);
+      if (!streaming) await page.screenshot({ path: path.join(out, test.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '.png') });
       if (s.crashed) await page.screenshot({ path: path.join(out, 'chat-render-failure.png') });
     }
     const stream = cases[4].markdown;
