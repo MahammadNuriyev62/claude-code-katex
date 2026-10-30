@@ -18,7 +18,9 @@ instead of being repaired in the DOM afterward.
   into the two `.use()` arguments covers every renderer, including callers with
   no plugin props. Getter reads stay unchanged; plugin arrays are copied with
   `concat`, and the original arguments remain when bundle loading fails.
-  Multiple proven processors are rejected rather than guessed.
+  Direct and destructured option reads, including immutable props aliases,
+  identify the same processor across compiler layouts. Multiple proven
+  processors are rejected rather than guessed.
   On upstream builds with native math, the uniquely identified
   `mathRenderingEnabled` getter is guarded so only one pipeline owns the source.
   The full original getter body remains unchanged and runs whenever
@@ -235,7 +237,8 @@ These are full chat-renderer tests, **not authenticated Claude replies**. Keep
 the separate live-response test and manual visual verification for releases.
 
 CI runs desktop tests on pinned pre-native 2.1.299, first-native 2.1.301 and latest
-Claude Code (scheduled runs: latest only), with source and published VSIX probes.
+Claude Code, plus pinned 2.1.314 for destructured options (scheduled runs: latest
+only), with source and published VSIX probes.
 The downloader pins the version resolved from Open VSX's platform metadata and
 verifies its checksum, avoiding a stale gallery search selecting an older build.
 

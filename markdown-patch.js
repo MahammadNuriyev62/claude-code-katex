@@ -147,10 +147,25 @@ function markdownProcessors(functions, nodeScopes) {
       own.push(n);
       stack.push(...children(n));
     }
-    const parameterProperty = n => n?.type === 'MemberExpression' &&
-      n.object.type === 'Identifier' && lookup(nodeScopes.get(n), n.object.name) === parameter
+    const parameterValue = (n, depth = 0) => {
+      if (n?.type !== 'Identifier' || depth > 12) return false;
+      const binding = lookup(nodeScopes.get(n), n.name);
+      return binding === parameter || !!binding && parameterValue(binding.node, depth + 1);
+    };
+    const parameterProperty = n => n?.type === 'MemberExpression' && parameterValue(n.object)
       ? memberName(n) : null;
     const reads = new Set(own.map(parameterProperty));
+    // Compilers can group property reads into destructuring without changing
+    // the processor. Count only keys read from the proven props parameter (or
+    // an immutable alias), never unrelated objects or nested function scopes.
+    for (const n of own) {
+      if (n.type === 'VariableDeclarator' && n.id.type === 'ObjectPattern' && parameterValue(n.init)) {
+        for (const prop of n.id.properties) {
+          const name = propertyName(prop);
+          if (name !== null) reads.add(name);
+        }
+      }
+    }
     if (!['children', 'components', 'remarkRehypeOptions'].every(key => reads.has(key))) continue;
     function pluginSource(n, depth = 0) {
       if (!n || depth > 12) return null;

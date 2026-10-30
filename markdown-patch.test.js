@@ -50,6 +50,11 @@ test.each([
   SHARED_MARKDOWN.replace(/\|\|/g, '??'),
   SHARED_MARKDOWN.replace('.use(remark)', '.use(p.remarkPlugins||[])').replace('.use(rehype)', '.use(p.rehypePlugins||[])'),
   SHARED_MARKDOWN.replace('const processor=', 'const alias=remark,htmlAlias=rehype;const processor=').replace('.use(remark)', '.use(alias)').replace('.use(rehype)', '.use(htmlAlias)'),
+  SHARED_MARKDOWN.replace('const children=p.children,components=p.components,options=p.remarkRehypeOptions;', 'const {children,components,remarkRehypeOptions:options}=p;'),
+  SHARED_MARKDOWN.replace('components=p.components', '{components}=p'),
+  SHARED_MARKDOWN.replace('components=p.components', '{["components"]:components}=p'),
+  SHARED_MARKDOWN.replace('const children=', 'const props=p;const children=').replaceAll('p.', 'props.'),
+  SHARED_MARKDOWN.replace('const children=p.children,components=p.components,options=p.remarkRehypeOptions;', 'const alias=p,props=alias;const {children,components,remarkRehypeOptions:options}=props;'),
 ])('recognizes compiler variations in the shared processor', processor => {
   const c = evaluateProcessor(processor + ';var result=M({remarkPlugins:[gfm],children:"text"});');
   expect(Array.from(c.result.plugins)).toEqual(['parser', 'gfm', 'brackets', 'math', 'bridge', 'katex']);
@@ -75,6 +80,10 @@ test.each([
   SHARED_MARKDOWN.replace('const remark=', 'let remark=').replace('const processor=', 'remark=unknown;const processor='),
   SHARED_MARKDOWN.replace('const parsed=', 'processor=unknown;const parsed='),
   SHARED_MARKDOWN.replace('const children=', '{let p=unknown;const children=').replace(/}$/, '}}'),
+  SHARED_MARKDOWN.replace('components=p.components', '{components}=unrelated'),
+  SHARED_MARKDOWN.replace('components=p.components', '{[dynamicKey]:components}=p'),
+  SHARED_MARKDOWN.replace('components=p.components', 'components=unknown').replace('const processor=', 'function decoy(){const {components}=p;}const processor='),
+  SHARED_MARKDOWN.replace('const children=', 'let alias=p;alias=unknown;const children=').replaceAll('p.', 'alias.'),
   SHARED_MARKDOWN + SHARED_MARKDOWN.replace(/\bM\b/g, 'Other'),
 ])('refuses ambiguous processors and unproven plugin or processor bindings', source => {
   expect(injectMathPlugins(source)).toBeNull();

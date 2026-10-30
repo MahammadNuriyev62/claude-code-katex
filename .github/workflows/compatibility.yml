@@ -18,7 +18,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        claude: ${{ fromJSON(github.event_name == 'schedule' && '["latest"]' || '["2.1.288","2.1.296","2.1.299","latest"]') }}
+        claude: ${{ fromJSON(github.event_name == 'schedule' && '["latest"]' || '["2.1.288","2.1.296","2.1.299","2.1.314","latest"]') }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -70,7 +70,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        claude: ${{ fromJSON(github.event_name == 'schedule' && '["latest"]' || '["2.1.299","2.1.301","latest"]') }}
+        claude: ${{ fromJSON(github.event_name == 'schedule' && '["latest"]' || '["2.1.299","2.1.301","2.1.314","latest"]') }}
     steps:
       - uses: actions/checkout@v7
         with:

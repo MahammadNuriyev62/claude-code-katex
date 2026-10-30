@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.7] - 2026-10-30
+
+- Support Claude Code 2.1.314's destructured Markdown options without relying on
+  minified identifiers. Preserve the existing pipeline validation and reject
+  unrelated, reassigned, or ambiguous props.
+- Pin 2.1.314 in compatibility and desktop VS Code CI; preserve screenshots of
+  multiple math samples and readable source-copy evidence.
+
 ## [2.1.6] - 2026-10-25
 
 - Prevent Claude Code's native math pipeline from running alongside the

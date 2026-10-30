@@ -6,7 +6,7 @@ function activate(context) {
   const port = Number(process.env.KATEX_TEST_DRIVER_PORT);
   const token = process.env.KATEX_TEST_DRIVER_TOKEN;
   if (!port || !token) return;
-  const allowed = new Set(['workbench.action.reloadWindow', 'claude-vscode.primaryEditor.open', 'claude-code-katex.disable']);
+  const allowed = new Set(['workbench.action.reloadWindow', 'workbench.action.closeAuxiliaryBar', 'claude-vscode.primaryEditor.open', 'claude-code-katex.disable']);
   const server = http.createServer(async (request, response) => {
     if (request.headers.authorization !== 'Bearer ' + token) { response.writeHead(403).end(); return; }
     const chunks = [];
@@ -18,8 +18,10 @@ function activate(context) {
       const { command, theme } = JSON.parse(Buffer.concat(chunks).toString() || '{}');
       if (command === 'paste') {
         const document = await vscode.workspace.openTextDocument({ language: 'latex' });
-        await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside });
+        const editor = await vscode.window.showTextDocument(document, { viewColumn: vscode.ViewColumn.Beside });
         await vscode.commands.executeCommand('editor.action.clipboardPasteAction');
+        editor.selection = new vscode.Selection(0, 0, 0, 0);
+        editor.revealRange(new vscode.Range(0, 0, 0, 0), vscode.TextEditorRevealType.AtTop);
         response.writeHead(200).end(JSON.stringify({ pasted: document.getText() })); return;
       } else if (theme && ['Default Dark Modern', 'Default Light Modern'].includes(theme)) {
         await vscode.workspace.getConfiguration('workbench').update('colorTheme', theme, vscode.ConfigurationTarget.Global);
