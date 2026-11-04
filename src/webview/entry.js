@@ -168,10 +168,67 @@ function protectInlineCode(line) {
   } };
 }
 
+// --- pipes inside inline math in GFM tables --------------------------------
+//
+// GFM splits a table row on every unescaped `|` before any inline construct is
+// parsed, math included, so `| $|x|$ |` loses its formula: the cell keeps only
+// `$` and the rest of the row shifts into other columns. Claude writes absolute
+// values and set-builder bars in tables often. Escaping them as `\|` would keep
+// the row intact but change the formula, since `\|` inside math is the norm.
+// Instead each bare `|` inside an inline `$...$` span is swapped for a
+// private-use placeholder before parsing, and swapped back in the parsed tree
+// (restoreMathPipes). The placeholder is one UTF-16 unit, like `|`, so source
+// offsets are unchanged. An escaped `\|` already survives the row split and is
+// left as written. Outside a table the swap and restore cancel out.
+const MATH_PIPE_PLACEHOLDER = '';
+
+function protectMathPipes(line) {
+  if (line.indexOf('|') === -1) return line;
+  // escapeCurrencyDollars has already escaped every `$` that does not open or
+  // close a span, and \( \) are converted, so the unescaped single `$` pair up
+  // in order.
+  const delimiters = [];
+  for (let k = 0; k < line.length; k++) {
+    if (line[k] !== '$') continue;
+    if (line[k + 1] === '$') { k++; continue; } // `$$` -> display, leave it
+    if (line[k - 1] === '\\') continue;         // escaped `\$`
+    delimiters.push(k);
+  }
+  let out = '', position = 0;
+  for (let p = 0; p + 1 < delimiters.length; p += 2) {
+    const open = delimiters[p], close = delimiters[p + 1];
+    out += line.slice(position, open + 1);
+    for (let k = open + 1; k < close; k++) {
+      if (line[k] === '\\') { out += line.slice(k, k + 2); k++; continue; }
+      out += line[k] === '|' ? MATH_PIPE_PLACEHOLDER : line[k];
+    }
+    position = close;
+  }
+  return out + line.slice(position);
+}
+
+// Puts the protected pipes back. Every string an mdast node can carry from the
+// source is restored, not only inlineMath, so a placeholder can never surface
+// even where micromark did not read the span as math. inlineMath also keeps
+// its value in data.hChildren, which is what rehype-katex renders.
+function restoreMathPipes(node) {
+  if (!node || typeof node !== 'object') return;
+  for (const key of ['value', 'url', 'title', 'alt']) {
+    if (typeof node[key] === 'string' && node[key].indexOf(MATH_PIPE_PLACEHOLDER) !== -1) {
+      node[key] = node[key].split(MATH_PIPE_PLACEHOLDER).join('|');
+    }
+  }
+  if (node.data && Array.isArray(node.data.hChildren)) node.data.hChildren.forEach(restoreMathPipes);
+  if (Array.isArray(node.children)) node.children.forEach(restoreMathPipes);
+}
+
 function normalizeMathDelims(src) {
   if (typeof src !== 'string') return src;
   if (src.indexOf('\\') === -1 && src.indexOf('$') === -1) return src;
   const lookupLabel = buildLabelMap(src);
+  // A document that already contains the placeholder is left alone, so the
+  // restore can never turn the author's own character into `|`.
+  const protectPipes = src.indexOf(MATH_PIPE_PLACEHOLDER) === -1;
   const lines = src.split('\n');
   let inFence = false, fenceChar = '';
   for (let i = 0; i < lines.length; i++) {
@@ -198,6 +255,9 @@ function normalizeMathDelims(src) {
     // unbraced numeric argument; `\sqrt[\leftroot-2\uproot2 n]{…}` then renders as
     // a normal `\sqrt[n]{…}` instead of a katex-error.
     line = line.replace(/\\(?:leftroot|uproot)\s*(?:\{[^{}]*\}|-?\d+)?/g, '');
+
+    // Keep a `|` inside inline math from splitting a GFM table row.
+    if (protectPipes) line = protectMathPipes(line);
 
     // \eqref{name} / \ref{name} -> the labeled equation's \tag number, in
     // prose and math alike. Unresolved names fall through to the katex macros.
@@ -260,7 +320,11 @@ function resolveRefs(line, lookup) {
 function remarkBracketMath() {
   const parser = this.parser;
   if (typeof parser === 'function') {
-    this.parser = (doc, file) => parser(normalizeMathDelims(doc), file);
+    this.parser = (doc, file) => {
+      const tree = parser(normalizeMathDelims(doc), file);
+      if (typeof doc === 'string' && doc.indexOf(MATH_PIPE_PLACEHOLDER) === -1) restoreMathPipes(tree);
+      return tree;
+    };
   }
 }
 
