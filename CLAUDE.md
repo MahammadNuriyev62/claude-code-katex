@@ -77,6 +77,15 @@ instead of being repaired in the DOM afterward.
 The patch is version-stamped; an extension update prepares its replacement from
 the `.katex-bak` originals before changing the existing patch.
 
+Every VS Code window runs its own extension host, so a startup with several
+windows open makes them all patch the same files at once. All but the first see
+the files change while preparing (`replaceFiles` throws an error with code
+`KATEX_FILES_CHANGED`). Their webviews loaded the unpatched bundle, which means
+Claude Code's own math renderer, so `activate` retries after
+`CONCURRENT_PATCH_RETRY_DELAYS_MS`. A retry that finds the patch already current
+still reloads the webview, since the sibling window's reload covers only its own
+webviews. Any other write error is not retried.
+
 ## The plan approval view - `plan-patch.js`
 
 The plan panel Claude Code opens on the side is a **second webview**

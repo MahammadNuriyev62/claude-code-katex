@@ -5,10 +5,14 @@ const os = require('os');
 const crypto = require('crypto');
 const vm = require('vm');
 const planPatch = require('./plan-patch');
-const { replaceFiles } = require('./patch-files');
+const { replaceFiles, FILES_CHANGED_ERROR_CODE } = require('./patch-files');
 
 const PATCH_MARKER = '/* === KaTeX LaTeX Rendering Patch === */';
 const PATCH_CSS_MARKER = '/* === KaTeX LaTeX Rendering CSS Patch === */';
+// Delays before re-trying a startup patch that lost a race with another VS Code
+// window or a Claude Code update. Each attempt re-reads the files, so a sibling
+// window's finished patch is recognised as current on the first retry.
+const CONCURRENT_PATCH_RETRY_DELAYS_MS = [1000, 4000, 15000];
 
 // --- user macros (issue #15) ----------------------------------------------
 //
@@ -836,8 +840,16 @@ function activate(context) {
 
   // Auto-patch on startup. Files stay patched on disk between sessions so the
   // webview always loads the patched version (it loads before this extension).
-  const extDir = findClaudeCodeExtDir();
-  if (extDir) {
+  //
+  // Every VS Code window runs its own extension host, and all of them activate
+  // this extension at startup. When several windows open together they race to
+  // patch the same files: the first one wins, and every other one sees the files
+  // change while preparing its patch. Those windows loaded Claude Code's webview
+  // before any patch existed, so giving up there leaves them on the unpatched
+  // bundle — Claude Code's own math renderer — until a manual reload. Retry
+  // instead. A sibling's patch then reads as 'current', and this window's
+  // webview still has to be reloaded to pick it up.
+  function patchOnStartup(extDir, attempt) {
     try {
       const macroPayload = currentMacroPayload();
       const result = ensurePatched(extDir, vendorDir, macroPayload);
@@ -850,7 +862,7 @@ function activate(context) {
       if (result === 'macros-updated') {
         reloadWebviewAndNotify(
           `Claude Code LaTeX macros updated — ${describeMacros(macroPayload, vendorDir)}. The webview was reloaded.`);
-      } else if (result === 'fresh') {
+      } else if (result === 'fresh' || (result === 'current' && attempt > 0)) {
         reloadWebviewAndNotify('Claude Code LaTeX enabled. The webview was reloaded; reload again if any math still looks unrendered.');
       } else if (result === 'refreshed') {
         reloadWebviewAndNotify('Claude Code LaTeX updated. The webview was reloaded; reload again if any math still looks unrendered.');
@@ -862,8 +874,23 @@ function activate(context) {
           'Claude Code LaTeX changed plan approval view rendering. Reload the VS Code window to apply the change.');
       }
     } catch (e) {
-      console.error('[Claude Code LaTeX] Auto-patch failed:', e);
+      if (e && e.code === FILES_CHANGED_ERROR_CODE && attempt < CONCURRENT_PATCH_RETRY_DELAYS_MS.length) {
+        const delay = CONCURRENT_PATCH_RETRY_DELAYS_MS[attempt];
+        console.warn('[Claude Code LaTeX] Claude Code files changed while patching ' +
+          '(another VS Code window or a Claude Code update); retrying in ' + delay + ' ms.');
+        setTimeout(function() {
+          patchOnStartup(extDir, attempt + 1);
+          refreshStatusBar();
+        }, delay);
+      } else {
+        console.error('[Claude Code LaTeX] Auto-patch failed:', e);
+      }
     }
+  }
+
+  const extDir = findClaudeCodeExtDir();
+  if (extDir) {
+    patchOnStartup(extDir, 0);
   } else {
     console.warn('[Claude Code LaTeX] Claude Code extension not found.');
   }
@@ -1077,6 +1104,7 @@ module.exports._test = {
   applyPatch,
   removePatch,
   ensurePatched,
+  CONCURRENT_PATCH_RETRY_DELAYS_MS,
   reloadWebviewAndNotify,
   notifyUnsupported,
   reloadMacros,

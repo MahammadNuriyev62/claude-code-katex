@@ -799,6 +799,128 @@ describe('activate', () => {
 });
 
 // ============================================================
+// activate — several VS Code windows patching at once
+//
+// Each window runs its own extension host, and all of them activate this
+// extension at startup. Every window but the first sees the files change while
+// preparing its patch. Its webview loaded the unpatched bundle, so it must retry
+// and reload once a sibling's patch is in place, instead of giving up silently.
+// ============================================================
+describe('activate — concurrent patch from another window', () => {
+  let context, writeSpy, warnSpy, errorSpy;
+  const reloadMessage =
+    'Claude Code LaTeX enabled. The webview was reloaded; reload again if any math still looks unrendered.';
+
+  // The files another window would leave behind after patching the same build.
+  function siblingPatchedFiles() {
+    const siblingExtDir = path.join(tmpDir, 'sibling', path.basename(extDir));
+    fs.cpSync(extDir, siblingExtDir, { recursive: true });
+    applyPatch(siblingExtDir, vendorDir);
+    const webviewDir = path.join(siblingExtDir, 'webview');
+    return fs.readdirSync(webviewDir, { recursive: true })
+      .filter((name) => fs.statSync(path.join(webviewDir, name)).isFile())
+      .map((name) => ({ name, body: fs.readFileSync(path.join(webviewDir, name)) }));
+  }
+
+  // Runs `onStagedWrite` just before this window stages a file, i.e. after it
+  // read the originals it prepared its patch from and before it replaces them.
+  function interceptStagedWrites(onStagedWrite) {
+    const realWriteFileSync = fs.writeFileSync.bind(fs);
+    writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation((target, ...rest) => {
+      if (typeof target === 'string' && target.startsWith(extDir) && /\.katex-[0-9a-f]+\.tmp$/.test(target)) {
+        onStagedWrite(realWriteFileSync);
+      }
+      return realWriteFileSync(target, ...rest);
+    });
+  }
+
+  beforeEach(() => {
+    setupFakeClaudeCodeExt();
+    setupFakeVendorDir();
+    context = { extensionPath: tmpDir, subscriptions: [] };
+    mockGetExtension.mockReturnValue({ extensionPath: extDir });
+    jest.useFakeTimers();
+    warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    errorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    if (writeSpy) writeSpy.mockRestore();
+    writeSpy = undefined;
+    warnSpy.mockRestore();
+    errorSpy.mockRestore();
+    jest.useRealTimers();
+  });
+
+  test('reloads the webview once a sibling window has written the patch', () => {
+    const sibling = siblingPatchedFiles();
+    let siblingHasWritten = false;
+    interceptStagedWrites((realWriteFileSync) => {
+      if (siblingHasWritten) return;
+      siblingHasWritten = true;
+      for (const { name, body } of sibling) {
+        const target = path.join(extDir, 'webview', name);
+        fs.mkdirSync(path.dirname(target), { recursive: true });
+        realWriteFileSync(target, body);
+      }
+    });
+
+    activate(context);
+
+    // The first attempt lost the race: nothing reloaded yet, a retry is queued.
+    expect(mockExecuteCommand).not.toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('retrying in 1000 ms'));
+    const siblingJs = readJs();
+
+    jest.advanceTimersByTime(_test.CONCURRENT_PATCH_RETRY_DELAYS_MS[0]);
+
+    // The retry finds the sibling's patch current, leaves it byte-identical,
+    // and reloads this window's webview so it stops using the unpatched bundle.
+    expect(isPatched(extDir)).toBe(true);
+    expect(readJs()).toBe(siblingJs);
+    expect(mockExecuteCommand).toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
+    expect(mockShowInformationMessage).toHaveBeenCalledWith(reloadMessage, 'Reload Webview', 'Reload Window');
+    expect(mockStatusBarItem.text).toBe('$(symbol-operator) LaTeX');
+    expect(errorSpy).not.toHaveBeenCalled();
+  });
+
+  test('does not retry a failure unrelated to a concurrent change', () => {
+    interceptStagedWrites(() => {
+      throw Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    });
+
+    activate(context);
+    jest.runAllTimers();
+
+    expect(isPatched(extDir)).toBe(false);
+    expect(warnSpy).not.toHaveBeenCalledWith(expect.stringContaining('retrying'));
+    expect(errorSpy).toHaveBeenCalledWith('[Claude Code LaTeX] Auto-patch failed:', expect.any(Error));
+    expect(mockExecuteCommand).not.toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
+  });
+
+  test('gives up after a bounded number of retries when the files keep changing', () => {
+    const jsPath = path.join(extDir, 'webview', 'index.js');
+    let changes = 0;
+    interceptStagedWrites((realWriteFileSync) => {
+      changes += 1;
+      realWriteFileSync(jsPath, fs.readFileSync(jsPath, 'utf8') + '\n// changed ' + changes);
+    });
+
+    activate(context);
+    jest.runAllTimers();
+
+    const retries = _test.CONCURRENT_PATCH_RETRY_DELAYS_MS.length;
+    expect(warnSpy.mock.calls.filter(([message]) => /retrying/.test(message))).toHaveLength(retries);
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(errorSpy).toHaveBeenCalledWith('[Claude Code LaTeX] Auto-patch failed:', expect.objectContaining({
+      code: 'KATEX_FILES_CHANGED',
+    }));
+    expect(isPatched(extDir)).toBe(false);
+    expect(mockExecuteCommand).not.toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
+  });
+});
+
+// ============================================================
 // Reload Macros command
 //
 // Macros are read at activation and refreshed only on request, so this command
