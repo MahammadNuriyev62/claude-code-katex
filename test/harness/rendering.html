@@ -158,6 +158,43 @@ const cases = [
     el => [!!el.querySelector('table') && kx(el) === 4 && err(el) === 0,
            (el.querySelector('table') ? 'table' : 'NO table') + ', ' + kx(el) + ' katex']],
 
+  // ===== `|` inside inline math in a GFM table =====
+  // GFM splits a row on every unescaped `|` before math is parsed, so these
+  // cells used to lose their formula and push the rest of the row into other
+  // columns. The author's escaped `\|` must stay the norm.
+  ['TABLE-PIPE 1 — absolute values inside table cells', R`| quantity | formula |
+|---|---|
+| absolute value | $|x|$ |
+| power-law impact | $\kappa|\nu|^{1+\beta}$ |`,
+    el => { const tex = [...el.querySelectorAll('annotation[encoding="application/x-tex"]')].map(a => a.textContent);
+      const cells = [...el.querySelectorAll('tbody tr')].map(r => r.children.length);
+      return [kx(el) === 2 && err(el) === 0 && cells.join() === '2,2' &&
+              tex[0] === '|x|' && tex[1] === R`\kappa|\nu|^{1+\beta}`,
+              kx(el) + ' katex, cells ' + cells.join() + ', tex=' + JSON.stringify(tex)]; }],
+  ['TABLE-PIPE 2 — escaped \\| stays the norm beside a bare |', R`| norm | absolute value |
+|---|---|
+| $\|x\|$ | $|x|$ |`,
+    el => { const tex = [...el.querySelectorAll('annotation[encoding="application/x-tex"]')].map(a => a.textContent);
+      return [kx(el) === 2 && err(el) === 0 && tex[0] === R`\|x\|` && tex[1] === '|x|',
+              kx(el) + ' katex, tex=' + JSON.stringify(tex)]; }],
+  ['TABLE-PIPE 3 — set notation and \\(...\\) inside table cells', R`| set | bound |
+|---|---|
+| $\{x \mid |x|<1\}$ | \(|y|\le 1\) |`,
+    el => { const tex = [...el.querySelectorAll('annotation[encoding="application/x-tex"]')].map(a => a.textContent);
+      return [kx(el) === 2 && err(el) === 0 && tex[0] === R`\{x \mid |x|<1\}` && tex[1] === R`|y|\le 1`,
+              kx(el) + ' katex, tex=' + JSON.stringify(tex)]; }],
+  ['TABLE-PIPE 4 — currency in the same row stays literal', R`| price | formula |
+|---|---|
+| $5 | $|x|$ |`,
+    el => [kx(el) === 1 && err(el) === 0 && el.textContent.includes('$5') &&
+           el.querySelectorAll('tbody td').length === 2,
+           kx(el) + ' katex (want 1), text=' + JSON.stringify(el.textContent)]],
+  ['TABLE-PIPE 5 — pipes in math outside a table are unchanged', R`Both $|x|$ and $\|x\|$ appear here, and a | b stays text.`,
+    el => { const tex = [...el.querySelectorAll('annotation[encoding="application/x-tex"]')].map(a => a.textContent);
+      return [kx(el) === 2 && err(el) === 0 && tex[0] === '|x|' && tex[1] === R`\|x\|` &&
+              el.textContent.includes('a | b') && !el.textContent.includes(''),
+              kx(el) + ' katex, tex=' + JSON.stringify(tex)]; }],
+
   ['EDGE 19 — math inside an ordered list', R`1. First: $\alpha^2$
 2. Second: $\sum_{k=1}^{n} k$
 3. Third: $\int_0^1 x\,dx$`,
