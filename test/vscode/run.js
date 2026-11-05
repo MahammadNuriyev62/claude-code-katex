@@ -85,6 +85,14 @@ async function upstream(temp) {
   const vscodeVersion = execFileSync(cli, ['--version', '--no-sandbox'], { env, encoding: 'utf8' }).trim().split(/\r?\n/)[0];
   const report = { fixture: true, desktopVSCode: vscodeVersion, claudeCode: version, extension: candidate,
     package: vsix, sha256: crypto.createHash('sha256').update(fs.readFileSync(vsix)).digest('hex'), cases: [], consoleErrors: [] };
+  if (process.argv.includes('--startup-race')) {
+    try {
+      await require('./startup-race').run({ executable, env, cliArgs, extensions, claude, bundle, workspace, profile, temp, out, report });
+    } finally {
+      if (!process.env.KEEP_VSCODE_PROFILE) fs.rmSync(temp, { recursive: true, force: true });
+    }
+    return;
+  }
   const server = net.createServer(); await new Promise(r => server.listen(0, '127.0.0.1', r));
   const port = server.address().port; await new Promise(r => server.close(r));
   const driverSocket = net.createServer(); await new Promise(r => driverSocket.listen(0, '127.0.0.1', r));
@@ -129,6 +137,8 @@ async function upstream(temp) {
         const root = document.querySelector('#katex-chat-output');
         return { text: root.innerText, count: root.querySelectorAll('.katex').length, tables: root.querySelectorAll('table').length,
           code: [...root.querySelectorAll('pre code')].map(n => n.textContent.trim()),
+          cells: [...root.querySelectorAll('tbody tr')].map(n => n.children.length),
+          tex: [...root.querySelectorAll('annotation[encoding="application/x-tex"]')].map(n => n.textContent),
           errors: root.querySelectorAll('.katex-error,[mathcolor="#cc0000"]').length,
           crashed: root.innerText.includes('Error rendering content:'), native: window.__KATEX_CHAT_PROBE.effectiveGate };
       });
@@ -146,19 +156,26 @@ async function upstream(temp) {
     for (const test of cases) for (const streaming of [undefined, 'allText']) {
       const s = await render(test.markdown, streaming);
       check(!s.crashed && !s.errors && s.count === test.count && (!test.tables || s.tables === test.tables) &&
+        (!test.cells || s.cells.every(n => n === test.cells)) && (!test.tex || JSON.stringify(s.tex) === JSON.stringify(test.tex)) &&
         (!test.text || test.text.every(t => s.text.includes(t))) && (!test.code || s.code.includes(test.code)),
       `${test.name} (${streaming || 'complete'})`, s);
       if (!streaming) await page.screenshot({ path: path.join(out, test.name.replace(/[^a-z0-9]+/gi, '-').toLowerCase() + '.png') });
       if (s.crashed) await page.screenshot({ path: path.join(out, 'chat-render-failure.png') });
     }
-    const stream = cases[4].markdown;
-    for (const mode of ['allText', 'settledBlocks']) {
-      let crashed = false;
-      for (let end = 1; end < stream.length; end += 113) {
-        const s = await render(stream.slice(0, end), mode); crashed ||= s.crashed;
+    for (const test of [cases[4], cases.find(test => test.tex)]) {
+      const stream = test.markdown;
+      for (const mode of ['allText', 'settledBlocks']) {
+        let crashed = false, leaked = false;
+        for (let end = 1; end < stream.length; end += test.tex ? 11 : 113) {
+          const s = await render(stream.slice(0, end), mode);
+          crashed ||= s.crashed;
+          leaked ||= /[\uE002-\uF8FF]/.test(s.text);
+        }
+        const s = await render(stream);
+        check(!crashed && !leaked && !s.crashed && s.count === test.count && !s.errors &&
+          (!test.tex || JSON.stringify(s.tex) === JSON.stringify(test.tex)),
+        'streaming prefixes recover without marker leakage: ' + test.name + ' / ' + mode);
       }
-      const s = await render(stream);
-      check(!crashed && !s.crashed && s.count === cases[4].count && !s.errors, 'streaming prefixes recover and finish: ' + mode);
     }
     await render(interaction);
     const equation = frame.locator('#katex-chat-output .katex-source').first();
@@ -179,7 +196,7 @@ async function upstream(temp) {
       await page.mouse.move(display.x + display.width / 2, display.y + display.height + 5, { steps: 15 }); await page.mouse.up();
       await page.keyboard.press(`${metaKey}+c`);
       const copied = await poll(() => frame.evaluate(() => window.__KATEX_COPY_PROBE), 'trusted keyboard copy');
-      check(copied.trusted && copied.text.includes('$E=mc^2$') && copied.text.includes('$$' + tex + '$$'), 'trusted copy preserves inline and display LaTeX', copied);
+      check(copied.trusted && copied.text.includes('$|x|$') && copied.text.includes('$\\|y\\|$') && copied.text.includes('$E=mc^2$') && copied.text.includes('$$' + tex + '$$'), 'trusted copy preserves inline and display LaTeX', copied);
       const { pasted } = await control({ command: 'paste' });
       check(pasted.replace(/\r\n/g, '\n') === copied.text.replace(/\r\n/g, '\n'), 'native VS Code editor pastes the copied source exactly');
       await page.screenshot({ path: path.join(out, 'copied-source.png') });

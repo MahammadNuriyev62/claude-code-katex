@@ -3,7 +3,11 @@
   "publisher": "test",
   "version": "1.0.0",
   "private": true,
-  "engines": { "vscode": "^1.85.0" },
-  "activationEvents": ["onStartupFinished"],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "*"
+  ],
   "main": "./extension.js"
 }

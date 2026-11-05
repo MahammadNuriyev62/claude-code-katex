@@ -3,6 +3,7 @@
 const vscode = require('vscode');
 const http = require('http');
 function activate(context) {
+  require('./startup-gates').install(vscode);
   const port = Number(process.env.KATEX_TEST_DRIVER_PORT);
   const token = process.env.KATEX_TEST_DRIVER_TOKEN;
   if (!port || !token) return;

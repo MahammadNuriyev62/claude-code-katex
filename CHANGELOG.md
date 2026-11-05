@@ -1,5 +1,14 @@
 # Changelog
 
+## [2.1.8] - 2026-11-05
+
+- Retry startup patches after concurrent changes from another VS Code window
+  or an upstream update, and reload the losing window even if a sibling has
+  already applied the patch. Cancel pending retries on disable or disposal.
+- Preserve absolute values, norms and other inline formulas containing `|`
+  inside Markdown tables, including their original LaTeX when copied.
+- Add two-host desktop startup recovery CI and real-renderer table/copy checks.
+
 ## [2.1.7] - 2026-10-30
 
 - Support Claude Code 2.1.314's destructured Markdown options without relying on

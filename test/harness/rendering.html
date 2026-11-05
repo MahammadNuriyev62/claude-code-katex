@@ -158,6 +158,36 @@ const cases = [
     el => [!!el.querySelector('table') && kx(el) === 4 && err(el) === 0,
            (el.querySelector('table') ? 'table' : 'NO table') + ', ' + kx(el) + ' katex']],
 
+  ['TABLE PIPES — absolute values preserve cell boundaries and exact source', R`| Quantity | Formula |
+|---|---|
+| Absolute | $|x|$ |
+| Impact | $\kappa|\nu|^{1+\beta}$ |`,
+    el => { const tex = [...el.querySelectorAll('annotation[encoding="application/x-tex"]')].map(n => n.textContent);
+      return [kx(el) === 2 && err(el) === 0 && el.querySelectorAll('tbody td').length === 4 && tex.join(';') === R`|x|;\kappa|\nu|^{1+\beta}`, JSON.stringify(tex)]; }],
+  ['TABLE PIPES — norms, adjacent absolute bars and bracket delimiters', R`| Norm | Absolute |
+|---|---|
+| $\|x\|$ | $||x||$ |
+| \(|y|\le1\) | $\{x\mid |x|<1\}$ |`,
+    el => { const tex = [...el.querySelectorAll('annotation[encoding="application/x-tex"]')].map(n => n.textContent);
+      return [kx(el) === 4 && err(el) === 0 && el.querySelectorAll('tbody td').length === 4 && tex.join(';') === R`\|x\|;||x||;|y|\le1;\{x\mid |x|<1\}`, JSON.stringify(tex)]; }],
+  ['TABLE PIPES — currency and several spans in one cell', R`| Price | Math |
+|---|---|
+| $5 | $|x|$ and $|y|$ |`,
+    el => [kx(el) === 2 && err(el) === 0 && el.textContent.includes('$5') && el.querySelectorAll('tbody td').length === 2, el.textContent]],
+  ['TABLE PIPES — literal private-use characters survive beside math', '| Literal | Math |\n|---|---|\n| \uE002\uE003 | $|x|$ |',
+    el => [kx(el) === 1 && err(el) === 0 && el.querySelector('tbody td')?.textContent === '\uE002\uE003', el.textContent]],
+  ['TABLE PIPES — copy returns original LaTeX', R`| Math |
+|---|
+| $|x|+\|y\|$ |`,
+    el => { const c = syntheticCopy(el.querySelector('.katex'));
+      return [kx(el) === 1 && c.text === R`$|x|+\|y\|$`, JSON.stringify(c)]; }],
+  ['TABLE PIPES — ordinary prose, links and inline code keep pipes', 'Plain a | b and `$|code|$`, [a|b](https://example.com/a%7Cb) beside $|x|$.',
+    el => [kx(el) === 1 && el.querySelector('code')?.textContent === '$|code|$' && el.querySelector('a')?.textContent === 'a|b' && el.textContent.includes('Plain a | b'), el.textContent]],
+  ['TABLE PIPES — fenced code keeps raw source', '```tex\n$|x|$\n```\n\n$|y|$',
+    el => [kx(el) === 1 && el.querySelector('pre code')?.textContent.trim() === '$|x|$', el.textContent]],
+  ['TABLE PIPES — matrix row breaks and display bars stay verbatim', R`$$\begin{pmatrix}|x|&1\\2&|y|\end{pmatrix}$$`,
+    el => [kx(el) === 1 && err(el) === 0 && el.querySelector('annotation')?.textContent === R`\begin{pmatrix}|x|&1\\2&|y|\end{pmatrix}`, el.textContent]],
+
   ['EDGE 19 — math inside an ordered list', R`1. First: $\alpha^2$
 2. Second: $\sum_{k=1}^{n} k$
 3. Third: $\int_0^1 x\,dx$`,
