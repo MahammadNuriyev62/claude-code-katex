@@ -732,10 +732,10 @@ describe('activate', () => {
     expect(mockStatusBarItem.text).toMatch(/LaTeX/);
   });
 
-  test('pushes 7 disposables (4 commands + status bar + extension/config watchers)', () => {
+  test('owns the retry lifecycle as well as commands, status and watchers', () => {
     mockGetExtension.mockReturnValue({ extensionPath: extDir });
     activate(context);
-    expect(context.subscriptions.length).toBe(7);
+    expect(context.subscriptions.length).toBe(8);
   });
 
   test('registers an onDidChange watcher', () => {
@@ -795,6 +795,99 @@ describe('activate', () => {
     mockGetExtension.mockReturnValue(undefined);
     expect(() => activate(context)).not.toThrow();
     expect(mockRegisterCommand).toHaveBeenCalled();
+  });
+});
+
+describe('startup collision recovery', () => {
+  let context, writer, warn, error;
+  beforeEach(() => {
+    setupFakeClaudeCodeExt(); setupFakeVendorDir();
+    context = { extensionPath: tmpDir, subscriptions: [] };
+    mockGetExtension.mockReturnValue({ extensionPath: extDir });
+    jest.useFakeTimers();
+    warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+    error = jest.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    for (const disposable of context.subscriptions) disposable.dispose();
+    writer?.mockRestore(); warn.mockRestore(); error.mockRestore();
+    jest.useRealTimers();
+  });
+  function interrupt(callback, repeat = false) {
+    const targetDir = extDir, original = fs.writeFileSync.bind(fs);
+    let interrupted = false;
+    writer = jest.spyOn(fs, 'writeFileSync').mockImplementation((file, ...args) => {
+      if (typeof file === 'string' && file.startsWith(targetDir) && /index\.js\.katex-bak\.katex-[a-f0-9]+\.tmp$/.test(file) && (!interrupted || repeat)) {
+        interrupted = true; callback(original);
+      }
+      return original(file, ...args);
+    });
+  }
+  function siblingWins() {
+    const sibling = path.join(tmpDir, 'sibling');
+    fs.cpSync(extDir, sibling, { recursive: true });
+    applyPatch(sibling, vendorDir);
+    interrupt(() => fs.cpSync(sibling, extDir, { recursive: true }));
+  }
+  test('reloads its own stale webview after another window wins, without rewriting the winning patch', () => {
+    siblingWins(); activate(context);
+    expect(mockExecuteCommand).not.toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
+    const winningJs = readJs(), winningCss = readCss();
+    jest.advanceTimersByTime(1000);
+    expect(readJs()).toBe(winningJs); expect(readCss()).toBe(winningCss);
+    expect(mockExecuteCommand).toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
+    expect(error).not.toHaveBeenCalled();
+  });
+  test('stops after three retries if the upstream files keep changing', () => {
+    const file = path.join(extDir, 'webview/index.js');
+    let writes = 0;
+    interrupt(realWrite => { writes++; realWrite(file, fs.readFileSync(file, 'utf8') + '\n// update'); }, true);
+    activate(context); jest.runAllTimers();
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(writes).toBe(4);
+    expect(isPatched(extDir)).toBe(false);
+  });
+  test('does not retry permissions failures', () => {
+    interrupt(() => { throw Object.assign(new Error('denied'), { code: 'EACCES' }); });
+    activate(context); jest.runAllTimers();
+    expect(warn).not.toHaveBeenCalled(); expect(error).toHaveBeenCalledTimes(1);
+    expect(isPatched(extDir)).toBe(false);
+  });
+  test('disable cancels a queued retry even when the patch is not active yet', () => {
+    const file = path.join(extDir, 'webview/index.js');
+    interrupt(realWrite => realWrite(file, fs.readFileSync(file, 'utf8') + '\n// update'));
+    activate(context);
+    const disable = mockRegisterCommand.mock.calls.find(([name]) => name === 'claude-code-katex.disable')[1];
+    disable(); jest.runAllTimers();
+    expect(isPatched(extDir)).toBe(false);
+    expect(mockExecuteCommand).not.toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
+  });
+  test('manual enable takes over a queued retry and reloads a sibling patch exactly once', () => {
+    siblingWins(); activate(context);
+    const enable = mockRegisterCommand.mock.calls.find(([name]) => name === 'claude-code-katex.enable')[1];
+    enable(); jest.runAllTimers();
+    expect(mockExecuteCommand.mock.calls.filter(([name]) => name === 'workbench.action.webview.reloadWebviewAction')).toHaveLength(1);
+    expect(isPatched(extDir)).toBe(true);
+  });
+  test('disposing the extension cancels a queued retry', () => {
+    const file = path.join(extDir, 'webview/index.js');
+    interrupt(realWrite => realWrite(file, fs.readFileSync(file, 'utf8') + '\n// update'));
+    activate(context);
+    for (const disposable of context.subscriptions) disposable.dispose();
+    jest.runAllTimers(); expect(isPatched(extDir)).toBe(false);
+  });
+  test('re-resolves the installed Claude directory before retrying an update', () => {
+    const previous = extDir, file = path.join(previous, 'webview/index.js');
+    const next = path.join(tmpDir, 'next', 'anthropic.claude-code-2.0.0');
+    fs.cpSync(previous, next, { recursive: true });
+    interrupt(realWrite => {
+      realWrite(file, fs.readFileSync(file, 'utf8') + '\n// update');
+      mockGetExtension.mockReturnValue({ extensionPath: next });
+    });
+    activate(context); jest.advanceTimersByTime(1000);
+    expect(isPatched(next)).toBe(true); expect(isPatched(previous)).toBe(false);
+    expect(mockExecuteCommand).toHaveBeenCalledWith('workbench.action.webview.reloadWebviewAction');
   });
 });
 

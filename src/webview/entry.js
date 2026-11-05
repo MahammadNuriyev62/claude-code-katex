@@ -254,13 +254,79 @@ function resolveRefs(line, lookup) {
   });
 }
 
+// GFM splits table rows before inline math is tokenized. Shield only bare
+// pipes inside paired single-dollar spans, then restore the original source
+// in mdast/HAST before rehype-katex or copy-tex sees it. Choose a document-local
+// marker absent from the normalized source, including resolved references.
+function shieldMathPipes(source) {
+  if (typeof source !== 'string' || !source.includes('|')) return { source };
+  let marker;
+  for (let point = 0xE002; point <= 0xF8FF; point++) {
+    const candidate = String.fromCharCode(point);
+    if (!source.includes(candidate)) { marker = candidate; break; }
+  }
+  if (!marker) {
+    marker = '\uE002KATEXPIPE';
+    while (source.includes(marker)) marker += 'X';
+  }
+  let fence = null, display = false;
+  const lines = source.split('\n').map(line => {
+    const match = line.match(/^\s{0,3}(`{3,}|~{3,})(.*)$/);
+    if (match) {
+      if (!fence) fence = match[1];
+      else if (match[1][0] === fence[0] && match[1].length >= fence.length && !match[2].trim()) fence = null;
+      return line;
+    }
+    if (fence) return line;
+    if (/^\s*(?:(?:[-*+]|\d+[.)])\s+)?\$\$\s*$/.test(line)) { display = !display; return line; }
+    if (display) return line;
+    const code = protectInlineCode(line), text = code.text;
+    let opening = -1, start = 0, out = '';
+    for (let i = 0; i < text.length; i++) {
+      if (text[i] === '\\') { i++; continue; }
+      if (text[i] !== '$') continue;
+      if (text[i + 1] === '$') { while (text[i + 1] === '$') i++; continue; }
+      if (opening < 0) opening = i;
+      else {
+        out += text.slice(start, opening + 1);
+        for (let j = opening + 1; j < i; j++) {
+          if (text[j] === '\\') { out += text.slice(j, j + 2); j++; }
+          else out += text[j] === '|' ? marker : text[j];
+        }
+        start = i; opening = -1;
+      }
+    }
+    return code.restore(out + text.slice(start));
+  });
+  return { source: lines.join('\n'), marker };
+}
+
+function restoreMathPipes(tree, marker) {
+  if (!marker) return;
+  const stack = [tree];
+  while (stack.length) {
+    const node = stack.pop();
+    if (!node || typeof node !== 'object') continue;
+    for (const key of ['value', 'url', 'title', 'alt']) {
+      if (typeof node[key] === 'string') node[key] = node[key].split(marker).join('|');
+    }
+    if (Array.isArray(node.children)) stack.push(...node.children);
+    if (Array.isArray(node.data?.hChildren)) stack.push(...node.data.hChildren);
+  }
+}
+
 // A remark plugin that wraps the parser so normalizeMathDelims runs on the
 // raw document string. remark-parse has already set this.parser by the time
 // remark plugins are applied.
 function remarkBracketMath() {
   const parser = this.parser;
   if (typeof parser === 'function') {
-    this.parser = (doc, file) => parser(normalizeMathDelims(doc), file);
+    this.parser = (doc, file) => {
+      const prepared = shieldMathPipes(normalizeMathDelims(doc));
+      const tree = parser(prepared.source, file);
+      restoreMathPipes(tree, prepared.marker);
+      return tree;
+    };
   }
 }
 

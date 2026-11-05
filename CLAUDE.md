@@ -77,6 +77,13 @@ instead of being repaired in the DOM afterward.
 The patch is version-stamped; an extension update prepares its replacement from
 the `.katex-bak` originals before changing the existing patch.
 
+Several window extension hosts can prepare the same startup patch concurrently.
+`replaceFiles` reports changed bytes with `KATEX_FILES_CHANGED`; activation retries
+only this error after 1, 4 and 15 seconds, re-resolving the current installation.
+A retry that finds a sibling's patch current still reloads its own stale webview.
+Timers belong to the extension context and are canceled on manual enable/disable
+and disposal. Other errors are reported without retrying.
+
 ## The plan approval view - `plan-patch.js`
 
 The plan panel Claude Code opens on the side is a **second webview**
@@ -162,6 +169,14 @@ Markdown parser to normalize the raw source before micromark runs:
   flow construct only recognizes `$$` alone on a line.
 - fenced code blocks are skipped.
 
+After normalization, paired single-dollar math shields bare `|` from GFM's early
+table-row split. A document-local marker is chosen outside the normalized source
+(including resolved labels); existing private-use characters remain literal.
+The parser wrapper restores source-derived mdast strings and math HAST children
+before KaTeX or copy-tex reads them. Escaped norm bars, code and display blocks
+are preserved. Most documents use a one-code-unit marker; a collision-free string
+is used only if every candidate private-use character is already present.
+
 `entry.js` also wraps `rehype-katex` (`rehypeKatexWithCrossrefs`) to pass KaTeX
 macros mapping LaTeX cross-referencing to renderable output — `\label{x}` →
 invisible `\htmlId{x}{}` anchor (trust granted for that command only),
@@ -235,6 +250,15 @@ Reports record the tested upstream, VS Code and extension versions plus the
 VSIX path/hash; captures are explicitly labelled deterministic fixtures.
 These are full chat-renderer tests, **not authenticated Claude replies**. Keep
 the separate live-response test and manual visual verification for releases.
+
+`npm run test:vscode:startup` launches two actual desktop VS Code processes with
+isolated profiles sharing the official Claude extension directory and packaged
+VSIX. A test-only activation gate loads window A's original webview and pauses its
+staged writer while B commits. A must then detect the conflict and automatically
+reload, with both windows rendering the long inline/numeric/display samples.
+No manual reload is issued by this test. Scheduling gates and the labelled chat
+adapter live under `test/` and never ship in the VSIX. Latest CI checks both source
+and published VSIXs this way.
 
 CI runs desktop tests on pinned pre-native 2.1.299, first-native 2.1.301 and latest
 Claude Code, plus pinned 2.1.314 for destructured options (scheduled runs: latest

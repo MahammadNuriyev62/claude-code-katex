@@ -1,6 +1,12 @@
 const fs = require('fs');
 const crypto = require('crypto');
 
+const FILES_CHANGED_ERROR_CODE = 'KATEX_FILES_CHANGED';
+function filesChanged() {
+  return Object.assign(new Error('Claude Code files changed while preparing the patch; retry after the update finishes.'),
+    { code: FILES_CHANGED_ERROR_CODE });
+}
+
 // Stage every write before replacing any destination. Each replacement uses
 // rename; if one fails, roll back replacements already made. This is not a
 // crash-atomic transaction across files, but avoids truncated bundles and
@@ -13,7 +19,7 @@ function replaceFiles(files) {
       const exists = fs.existsSync(target);
       const original = exists ? fs.readFileSync(target) : null;
       if (expected !== undefined && (!original || !original.equals(expected))) {
-        throw new Error('Claude Code files changed while preparing the patch; retry after the update finishes.');
+        throw filesChanged();
       }
       const mode = exists ? fs.statSync(target).mode : undefined;
       const entry = { target, tmp: target + suffix, original, mode };
@@ -24,7 +30,7 @@ function replaceFiles(files) {
     for (const entry of staged) {
       const current = fs.existsSync(entry.target) ? fs.readFileSync(entry.target) : null;
       if (entry.original === null ? current !== null : !current || !current.equals(entry.original)) {
-        throw new Error('Claude Code files changed while preparing the patch; retry after the update finishes.');
+        throw filesChanged();
       }
     }
     for (const entry of staged) {
@@ -51,4 +57,4 @@ function replaceFiles(files) {
   }
 }
 
-module.exports = { replaceFiles };
+module.exports = { replaceFiles, FILES_CHANGED_ERROR_CODE };

@@ -29,11 +29,24 @@ $\frac{a}{b}$`, count: 2 },
    \end{pmatrix}$$
 
 2. Inline $\frac{1}{2}$ stays in its list.`, count: 2 },
+  { name: 'math pipes inside table cells', markdown: R`| Quantity | Formula |
+|---|---|
+| Absolute | $|x|$ |
+| Norm | $\|x\|$ |
+| Impact | $\kappa|\nu|^{1+\beta}$ |
+| Set | $\{x\mid |x|<1\}$ |
+| Bracket | \(|y|\le 1\) |
+| Price $5 | $|z|$ and $76$ |`, count: 7, tables: 1, cells: 2,
+    tex: [R`|x|`, R`\|x\|`, R`\kappa|\nu|^{1+\beta}`, R`\{x\mid |x|<1\}`, R`|y|\le 1`, R`|z|`, '76'] },
   { name: 'fenced code remains verbatim', markdown: '```tex\n$$x$$\n$y$\n\\[z\\]\n```\n\nActual $z^2$.', count: 1,
     code: '$$x$$\n$y$\n\\[z\\]' },
 ];
 
 const interaction = R`Inline $E=mc^2$ and $\frac{a}{b}$.
+
+| Absolute | Norm |
+|---|---|
+| $|x|$ | $\|y\|$ |
 
 $$\int_0^1 x^2\,dx=\frac13$$
 

@@ -5,7 +5,8 @@ const os = require('os');
 const crypto = require('crypto');
 const vm = require('vm');
 const planPatch = require('./plan-patch');
-const { replaceFiles } = require('./patch-files');
+const { replaceFiles, FILES_CHANGED_ERROR_CODE } = require('./patch-files');
+const STARTUP_RETRY_DELAYS_MS = [1000, 4000, 15000];
 
 const PATCH_MARKER = '/* === KaTeX LaTeX Rendering Patch === */';
 const PATCH_CSS_MARKER = '/* === KaTeX LaTeX Rendering CSS Patch === */';
@@ -833,11 +834,25 @@ function reloadMacros(vendorDir) {
 
 function activate(context) {
   const vendorDir = path.join(context.extensionPath, 'vendor');
+  let startupTimer, startupCanceled = false;
+  function cancelStartupRetry() {
+    startupCanceled = true;
+    clearTimeout(startupTimer);
+    startupTimer = undefined;
+  }
+  context.subscriptions.push({ dispose: cancelStartupRetry });
 
   // Auto-patch on startup. Files stay patched on disk between sessions so the
   // webview always loads the patched version (it loads before this extension).
-  const extDir = findClaudeCodeExtDir();
-  if (extDir) {
+  function patchOnStartup(attempt = 0) {
+    if (startupCanceled) return;
+    // A Claude update may change directories between attempts. Never keep
+    // writing the obsolete directory captured by the losing window.
+    const extDir = findClaudeCodeExtDir();
+    if (!extDir) {
+      console.warn('[Claude Code LaTeX] Claude Code extension not found.');
+      return;
+    }
     try {
       const macroPayload = currentMacroPayload();
       const result = ensurePatched(extDir, vendorDir, macroPayload);
@@ -850,7 +865,8 @@ function activate(context) {
       if (result === 'macros-updated') {
         reloadWebviewAndNotify(
           `Claude Code LaTeX macros updated — ${describeMacros(macroPayload, vendorDir)}. The webview was reloaded.`);
-      } else if (result === 'fresh') {
+      } else if (result === 'fresh' || (result === 'current' && attempt > 0)) {
+        // A sibling's disk patch cannot reload this window's stale webview.
         reloadWebviewAndNotify('Claude Code LaTeX enabled. The webview was reloaded; reload again if any math still looks unrendered.');
       } else if (result === 'refreshed') {
         reloadWebviewAndNotify('Claude Code LaTeX updated. The webview was reloaded; reload again if any math still looks unrendered.');
@@ -862,22 +878,33 @@ function activate(context) {
           'Claude Code LaTeX changed plan approval view rendering. Reload the VS Code window to apply the change.');
       }
     } catch (e) {
-      console.error('[Claude Code LaTeX] Auto-patch failed:', e);
+      if (e?.code === FILES_CHANGED_ERROR_CODE && attempt < STARTUP_RETRY_DELAYS_MS.length) {
+        const delay = STARTUP_RETRY_DELAYS_MS[attempt];
+        console.warn('[Claude Code LaTeX] Concurrent file change; retrying startup patch in ' + delay + ' ms.');
+        startupTimer = setTimeout(() => {
+          startupTimer = undefined;
+          patchOnStartup(attempt + 1);
+          refreshStatusBar();
+        }, delay);
+      } else console.error('[Claude Code LaTeX] Auto-patch failed:', e);
     }
-  } else {
-    console.warn('[Claude Code LaTeX] Claude Code extension not found.');
   }
+  patchOnStartup();
 
   // Enable command
   context.subscriptions.push(
     vscode.commands.registerCommand('claude-code-katex.enable', function() {
+      const wasRetrying = startupTimer !== undefined;
+      cancelStartupRetry();
       const dir = findClaudeCodeExtDir();
       if (!dir) {
         vscode.window.showErrorMessage('Claude Code extension not found.');
         return;
       }
       if (isPatched(dir)) {
-        vscode.window.showInformationMessage('Claude Code LaTeX is already active.');
+        if (wasRetrying) {
+          reloadWebviewAndNotify('Claude Code LaTeX enabled. The webview was reloaded; reload again if any math still looks unrendered.');
+        } else vscode.window.showInformationMessage('Claude Code LaTeX is already active.');
         return;
       }
       try {
@@ -896,6 +923,7 @@ function activate(context) {
   // Disable command
   context.subscriptions.push(
     vscode.commands.registerCommand('claude-code-katex.disable', function() {
+      cancelStartupRetry();
       const dir = findClaudeCodeExtDir();
       if (!dir) {
         vscode.window.showErrorMessage('Claude Code extension not found.');

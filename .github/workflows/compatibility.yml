@@ -97,6 +97,13 @@ jobs:
           EXTENSION_VSIX_PATH: test-results/desktop/candidate.vsix
           TEST_RESULTS_DIR: test-results/desktop/source
         run: xvfb-run -a npm run test:vscode
+      - name: Two desktop windows recover from a startup collision
+        if: matrix.claude == 'latest'
+        env:
+          CLAUDE_VERSION: latest
+          EXTENSION_VSIX_PATH: test-results/desktop/candidate.vsix
+          TEST_RESULTS_DIR: test-results/desktop/startup
+        run: xvfb-run -a npm run test:vscode:startup
       - name: Published VSIX in desktop VS Code
         if: always() && github.event_name != 'pull_request' && matrix.claude == 'latest' && steps.package.outcome == 'success'
         env:
@@ -109,6 +116,7 @@ jobs:
           url=$(jq -er '[.assets[] | select(.name | endswith(".vsix"))] | if length == 1 then .[0].url else error("Expected one published VSIX") end' test-results/desktop/release.json)
           curl --fail --location --retry 3 "$url" -o "$EXTENSION_VSIX_PATH"
           xvfb-run -a npm run test:vscode
+          TEST_RESULTS_DIR=test-results/desktop/published-startup xvfb-run -a npm run test:vscode:startup
       - name: Preserve desktop evidence
         if: always()
         uses: actions/upload-artifact@v7
