@@ -54,6 +54,16 @@ async function findPatchedFrame(page, attempts = 45) {
   const browser = await chromium.launch({ headless: true, args: ['--no-sandbox', '--disable-dev-shm-usage'] });
   const page = await browser.newContext({ viewport: { width: 1600, height: 1000 } }).then((c) => c.newPage());
 
+  // Claude Code can show its own trust prompt even with VS Code trust disabled.
+  // Decline it in the disposable test workspace so real pointer events can reach the webview.
+  const trustPrompt = page.locator('.monaco-dialog-box').filter({
+    hasText: 'Trust this folder in Claude Code?',
+  });
+  await page.addLocatorHandler(trustPrompt, async (dialog) => {
+    await dialog.getByRole('button', { name: /^Don['’]t trust$/ }).click();
+    console.log('[macros] declined the Claude Code folder trust prompt');
+  });
+
   const die = async (msg) => {
     console.error(`\n[macros] ${msg}`);
     try { await page.screenshot({ path: `${OUT_DIR}/webview-macros-fail.png`, fullPage: true }); } catch (_) {}
@@ -180,7 +190,11 @@ async function findPatchedFrame(page, attempts = 45) {
 
   const sourceButton = frame.locator('#katex-source-probe .katex-source-toggle');
   const initialOpacity = await sourceButton.evaluate((el) => getComputedStyle(el).opacity);
-  await sourceButton.hover();
+  try {
+    await sourceButton.hover();
+  } catch (error) {
+    await die(`Could not hover the source reveal button: ${error.message}`);
+  }
   await sleep(150);
   const hoverOpacity = await sourceButton.evaluate((el) => getComputedStyle(el).opacity);
   await sourceButton.press('Enter');
