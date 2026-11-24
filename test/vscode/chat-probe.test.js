@@ -5,6 +5,14 @@ Dom.createRoot(document.querySelector('#root')).render(jsx(App,{}));`;
 const current = `function Chat({content:c,context:x,streaming:s,links:l='live'}){return c}
 class State {get mathRenderingEnabled(){return this.enabled}}`;
 
+test.each([
+  'const asset=new URL("./asset.svg",import.meta.url);',
+  'import asset from "./asset.js";export {asset};',
+  'await Promise.resolve();',
+])('adapter supports module webviews: %s', prefix => {
+  expect(chatProbe(prefix + current + bootstrap)).toContain('jsx(Chat,');
+});
+
 test('adapter resolves actual component and factories without depending on minified names', () => {
   const probe = chatProbe(current + bootstrap);
   expect(probe).toContain('Dom.createRoot(output)');

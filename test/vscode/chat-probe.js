@@ -2,7 +2,7 @@
 // root mount and error boundary from the installed, compiled Claude webview.
 // No minified identifiers, replacement parser, React copy or test hook ships
 // in the extension. A changed/ambiguous upstream layout fails the UI test.
-const { parse } = require('../../vendor/acorn');
+const { parseJavaScript } = require('../../javascript');
 
 const PROBE_MARKER = '/* Claude Code chat regression probe (test only) */';
 function key(node) {
@@ -12,7 +12,7 @@ function key(node) {
   return null;
 }
 function chatProbe(source) {
-  const ast = parse(source, { ecmaVersion: 'latest' });
+  const ast = parseJavaScript(source);
   const markdown = [], gates = [], mounts = [], boundaries = [];
   const stack = [{ node: ast, parent: null }];
   while (stack.length) {

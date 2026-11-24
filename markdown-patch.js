@@ -1,7 +1,7 @@
 // Locate a Markdown props object structurally, without depending on minified
 // names, whitespace, property order, or the number of branches in its helper.
 // Acorn is bundled locally; no parser dependency is needed after installation.
-const { parse } = require('./vendor/acorn');
+const { parseJavaScript } = require('./javascript');
 
 const V2_INJECT_RE = /([A-Za-z_$][\w$]{0,40})\(([A-Za-z_$][\w$]{0,40}),\{remarkPlugins:\[([A-Za-z_$][\w$,]{0,200})\]/;
 
@@ -136,10 +136,7 @@ function rewrite(body, edits) {
 // parsed and run. All bindings are lexical and reassigned values are rejected.
 function markdownProcessors(functions, nodeScopes) {
   const matches = [];
-  for (const { node: fn, scope } of functions) {
-    if (fn.params.length !== 1 || fn.params[0].type !== 'Identifier') continue;
-    const parameter = lookup(scope, fn.params[0].name);
-    if (!parameter?.parameter) continue;
+  const ownNodes = fn => {
     const own = [], stack = [fn.body];
     while (stack.length) {
       const n = stack.pop();
@@ -147,6 +144,22 @@ function markdownProcessors(functions, nodeScopes) {
       own.push(n);
       stack.push(...children(n));
     }
+    return own;
+  };
+  const consumed = (own, binding) => {
+    const calls = own.filter(n => n.type === 'CallExpression' &&
+      n.callee.type === 'MemberExpression' && n.callee.object.type === 'Identifier' &&
+      lookup(nodeScopes.get(n), n.callee.object.name) === binding);
+    const parses = calls.filter(n => memberName(n.callee) === 'parse');
+    return parses.length && calls.some(run => memberName(run.callee) === 'runSync' &&
+      (parses.includes(run.arguments[0]) || run.arguments[0]?.type === 'Identifier' &&
+        parses.includes(lookup(nodeScopes.get(run), run.arguments[0].name)?.node)));
+  };
+  for (const { node: fn, scope } of functions) {
+    if (fn.params.length !== 1 || fn.params[0].type !== 'Identifier') continue;
+    const parameter = lookup(scope, fn.params[0].name);
+    if (!parameter?.parameter) continue;
+    const own = ownNodes(fn);
     const parameterValue = (n, depth = 0) => {
       if (n?.type !== 'Identifier' || depth > 12) return false;
       const binding = lookup(nodeScopes.get(n), n.name);
@@ -166,7 +179,7 @@ function markdownProcessors(functions, nodeScopes) {
         }
       }
     }
-    if (!['children', 'components', 'remarkRehypeOptions'].every(key => reads.has(key))) continue;
+    if (!reads.has('remarkRehypeOptions')) continue;
     function pluginSource(n, depth = 0) {
       if (!n || depth > 12) return null;
       const property = parameterProperty(n);
@@ -178,11 +191,24 @@ function markdownProcessors(functions, nodeScopes) {
       }
       return null;
     }
-    for (const declaration of own.filter(n => n.type === 'VariableDeclarator' && n.id.type === 'Identifier')) {
-      const binding = lookup(nodeScopes.get(declaration), declaration.id.name);
-      if (!binding || binding.node !== declaration.init) continue;
+    const returns = own.filter(n => n.type === 'ReturnStatement');
+    for (const declaration of own.filter(n => n.type === 'VariableDeclarator' && n.id.type === 'Identifier' ||
+        n.type === 'ReturnStatement' && returns.length === 1)) {
+      const returned = declaration.type === 'ReturnStatement';
+      const binding = !returned && lookup(nodeScopes.get(declaration), declaration.id.name);
+      if (!returned && (!binding || binding.node !== declaration.init ||
+          !['children', 'components'].every(key => reads.has(key)) || !consumed(own, binding))) continue;
+      // Newer react-markdown returns the processor from a separate builder.
+      // Prove a caller uses that exact immutable result for parse + runSync.
+      if (returned && !functions.some(({ node: caller }) => ownNodes(caller).some(n => {
+        if (n.type !== 'VariableDeclarator' || n.id.type !== 'Identifier' ||
+            n.init?.type !== 'CallExpression' || n.init.callee.type !== 'Identifier' ||
+            n.init.arguments.length !== 1 || lookup(nodeScopes.get(n), n.init.callee.name)?.node !== fn) return false;
+        const result = lookup(nodeScopes.get(n), n.id.name);
+        return result?.node === n.init && consumed(ownNodes(caller), result);
+      }))) continue;
       const uses = [];
-      let call = declaration.init;
+      let call = returned ? declaration.argument : declaration.init;
       while (call?.type === 'CallExpression' && memberName(call.callee) === 'use') {
         uses.unshift(call);
         call = call.callee.object;
@@ -192,13 +218,6 @@ function markdownProcessors(functions, nodeScopes) {
       const rehype = plugins.filter(p => p.kind === 'rehypePlugins');
       if (remark.length !== 1 || rehype.length !== 1 || remark[0].index + 1 >= rehype[0].index ||
           remark[0].use.arguments.length !== 1 || rehype[0].use.arguments.length !== 1) continue;
-      const processorCalls = own.filter(n => n.type === 'CallExpression' &&
-        n.callee.type === 'MemberExpression' && n.callee.object.type === 'Identifier' &&
-        lookup(nodeScopes.get(n), n.callee.object.name) === binding);
-      const parses = processorCalls.filter(n => memberName(n.callee) === 'parse');
-      const runs = processorCalls.filter(n => memberName(n.callee) === 'runSync');
-      if (!parses.length || !runs.some(run => run.arguments[0]?.type === 'Identifier' &&
-          parses.includes(lookup(nodeScopes.get(run), run.arguments[0].name)?.node))) continue;
       matches.push({ remark: remark[0].use.arguments[0], rehype: rehype[0].use.arguments[0] });
     }
   }
@@ -239,7 +258,7 @@ function returnsPluginProps(node, scope, nodeScopes, depth = 0, called = false) 
 function injectMathPlugins(body, report = () => {}) {
   if (body.includes('/* === KaTeX LaTeX Rendering Patch === */')) return null;
   let ast;
-  try { ast = parse(body, { ecmaVersion: 'latest', sourceType: 'script' }); }
+  try { ast = parseJavaScript(body); }
   catch (error) { report({ reason: 'invalid-javascript', message: error.message }); return null; }
   const nativeEdits = nativeMathEdits(ast, report);
   if (nativeEdits === null) return null;

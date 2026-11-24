@@ -1,5 +1,12 @@
 # Changelog
 
+## [2.1.9] - 2026-11-24
+
+- Support Claude Code 2.1.331's module webview and split Markdown processor.
+- Validate module syntax during patching, upgrades, disable and uninstall.
+- Add parser and processor regression tests; pin 2.1.331 in compatibility
+  and desktop VS Code CI.
+
 ## [2.1.8] - 2026-11-05
 
 - Retry startup patches after concurrent changes from another VS Code window
