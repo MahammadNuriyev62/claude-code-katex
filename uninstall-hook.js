@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
+const { parseJavaScript } = require('./javascript');
 const { replaceFiles } = require('./patch-files');
 
 function findClaudeCodeDir() {
@@ -41,7 +42,7 @@ function cleanupClaudeCode(extDir) {
           if (original.includes(marker) || (f.endsWith('.js') && !original.trim())) {
             throw new Error('original backup is invalid');
           }
-          if (f.endsWith('.js')) new vm.Script(original);
+          if (f.endsWith('.js')) parseJavaScript(original);
           replaceFiles([{ target: orig, body: original }]);
         } catch (error) {
           console.warn('[Claude Code LaTeX] Could not restore ' + f + ': ' + error.message);

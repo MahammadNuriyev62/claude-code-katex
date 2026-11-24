@@ -15,6 +15,15 @@ afterEach(() => {
   fs.rmSync(tmp, { recursive: true, force: true });
 });
 
+test('uninstall restores a module webview byte-exactly', () => {
+  const original = 'export const asset = new URL("./asset.svg", import.meta.url);';
+  fs.writeFileSync(path.join(tmp, 'webview/index.js'), '/* === KaTeX LaTeX Rendering Patch === */ patched');
+  fs.writeFileSync(path.join(tmp, 'webview/index.js.katex-bak'), original);
+  cleanupClaudeCode(tmp);
+  expect(fs.readFileSync(path.join(tmp, 'webview/index.js'), 'utf8')).toBe(original);
+  expect(fs.existsSync(path.join(tmp, 'webview/index.js.katex-bak'))).toBe(false);
+});
+
 test('restores patched webview and host files from pristine backups', () => {
   fs.writeFileSync(path.join(tmp, 'webview', 'index.js'), '/* === KaTeX LaTeX Rendering Patch === */ patched js');
   fs.writeFileSync(path.join(tmp, 'webview', 'index.js.katex-bak'), '/* original js */');

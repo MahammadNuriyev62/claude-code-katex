@@ -4,6 +4,7 @@ const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
 const vm = require('vm');
+const { parseJavaScript } = require('./javascript');
 const planPatch = require('./plan-patch');
 const { replaceFiles, FILES_CHANGED_ERROR_CODE } = require('./patch-files');
 const STARTUP_RETRY_DELAYS_MS = [1000, 4000, 15000];
@@ -592,8 +593,8 @@ function applyPatch(extDir, vendorDir, macroPayload, originalBody) {
     `${BUNDLE_ANCHOR}\n${v2Bundle}\n` +
     `/* === End KaTeX Patch — Claude Code bundle (math plugins injected) follows === */\n` +
     injectedBody;
-  // Compile without executing, before touching backups, fonts, or bundles.
-  new vm.Script(patchedJs, { filename: 'Claude Code patched webview' });
+  // Validate script or module syntax before touching backups, fonts, or bundles.
+  parseJavaScript(patchedJs);
 
   // Patch index.css — KaTeX styles
   const katexCss = fs.readFileSync(path.join(vendorDir, 'katex.min.css'), 'utf8');
@@ -653,7 +654,7 @@ function removePatch(extDir) {
     if (original.includes(marker) || (f === jsPath && !original.trim())) {
       throw new Error('Cannot restore Claude Code: its original backup is invalid.');
     }
-    if (f === jsPath) new vm.Script(original);
+    if (f === jsPath) parseJavaScript(original);
     files.push({ target: f, body: original, expected: current });
   }
   replaceFiles(files);
@@ -679,7 +680,7 @@ function canRestoreOriginals(extDir) {
     if (!fs.existsSync(jsBak) || !fs.existsSync(cssBak)) return false;
     const original = fs.readFileSync(jsBak, 'utf8');
     if (!original.trim() || original.includes(PATCH_MARKER)) return false;
-    new vm.Script(original);
+    parseJavaScript(original);
     if (fs.readFileSync(cssBak, 'utf8').includes(PATCH_CSS_MARKER)) return false;
     return true;
   } catch {

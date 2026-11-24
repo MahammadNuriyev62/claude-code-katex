@@ -5,6 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const vm = require('vm');
+const { execFileSync } = require('child_process');
 
 jest.mock('vscode', () => ({
   window: {},
@@ -45,7 +46,43 @@ function makeExtDir(jsBody) {
   return dir;
 }
 const readJs = (d) => fs.readFileSync(path.join(d, 'webview', 'index.js'), 'utf8');
-const isValidJs = (code) => { try { new vm.Script(code); return true; } catch { return false; } };
+const isValidJs = (code) => {
+  try { new vm.Script(code); return true; }
+  catch {
+    try { execFileSync(process.execPath, ['--check', '--input-type=module'], { input: code }); return true; }
+    catch { return false; }
+  }
+};
+
+test.each([
+  'const asset = new URL("./asset.svg", import.meta.url);',
+  'import asset from "./asset.js"; export { asset };',
+  'export const ready = await Promise.resolve(true);',
+])('module webviews support patch, refresh and byte-exact restoration: %s', prefix => {
+  const original = prefix + FIXTURE_WITH;
+  const dir = makeExtDir(original);
+  try {
+    expect(_test.ensurePatched(dir, VENDOR)).toBe('fresh');
+    execFileSync(process.execPath, ['--check', '--input-type=module'], { input: readJs(dir) });
+    // An older version stamp forces the same refresh path used on upgrades.
+    fs.writeFileSync(path.join(dir, 'webview/index.js'), readJs(dir).replace(
+      'katex-ext-version: ' + _test.EXTENSION_VERSION, 'katex-ext-version: 0.0.1'));
+    expect(_test.ensurePatched(dir, VENDOR)).toBe('refreshed');
+    execFileSync(process.execPath, ['--check', '--input-type=module'], { input: readJs(dir) });
+    _test.removePatch(dir);
+    expect(readJs(dir)).toBe(original);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('invalid module syntax is rejected without writing backups or assets', () => {
+  const original = 'const broken = import.meta.;' + FIXTURE_WITH;
+  const dir = makeExtDir(original);
+  try {
+    expect(_test.applyPatch(dir, VENDOR)).toBe(false);
+    expect(readJs(dir)).toBe(original);
+    expect(fs.readdirSync(path.join(dir, 'webview')).sort()).toEqual(['index.css', 'index.js']);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 
 describe('v2 injection regex', () => {
   test('matches the real react-markdown call shape', () => {
@@ -236,7 +273,8 @@ describe('spread plugin props (Claude Code 2.1.296)', () => {
 // that.
 describe('applyPatch — against the real Claude Code bundle (if present)', () => {
   const candidates = (() => {
-    const out = [];
+    const out = process.env.CLAUDE_EXTENSION_PATH
+      ? [path.join(process.env.CLAUDE_EXTENSION_PATH, 'webview/index.js')] : [];
     const bases = [
       path.join(os.homedir(), '.vscode', 'extensions'),
       path.join(os.homedir(), '.vscode-server', 'extensions'),

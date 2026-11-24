@@ -21,6 +21,8 @@ instead of being repaired in the DOM afterward.
   Direct and destructured option reads, including immutable props aliases,
   identify the same processor across compiler layouts. Multiple proven
   processors are rejected rather than guessed.
+  Separate processor builders are accepted only when an immutable caller result
+  feeds that same processor's `parse` and `runSync` calls.
   On upstream builds with native math, the uniquely identified
   `mathRenderingEnabled` getter is guarded so only one pipeline owns the source.
   The full original getter body remains unchanged and runs whenever
@@ -40,7 +42,9 @@ instead of being repaired in the DOM afterward.
   and URL transform, including the Windows file-link plugin. Multiple candidate
   fallback call sites are rejected as unsupported. Structural rejection reasons
   are logged so compatibility failures can be diagnosed without guesswork.
-- The complete patched JavaScript must compile before any files change. All
+- Webview parsing and backup validation accept classic scripts and ES modules
+  (including `import.meta`, imports/exports and top-level await). The complete
+  patched JavaScript must parse before any files change. All
   assets are read first, then backups, fonts, CSS, and JS are staged and replaced
   with per-file renames. Ordinary write failures roll back prior replacements;
   a process crash between renames is not an atomic transaction across files.

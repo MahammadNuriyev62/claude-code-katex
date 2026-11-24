@@ -8,6 +8,44 @@ const SHARED_MARKDOWN = `function M(p){
   const parsed=processor.parse(children);return processor.runSync(parsed);
 }`;
 
+const SPLIT_MARKDOWN = `function build(p){
+  const remark=p.remarkPlugins||[],rehype=p.rehypePlugins||[],options=p.remarkRehypeOptions;
+  return unified().use(parser).use(remark).use(bridge,options).use(rehype);
+}
+function M(p){const processor=build(p);return processor.runSync(processor.parse(p.children));}`;
+
+test.each([true, false])('split processor builder preserves plugin order and fallback: %s', loaded => {
+  const c = evaluateProcessor(SPLIT_MARKDOWN + ';var result=M({children:"text",remarkPlugins:[gfm],rehypePlugins:[existing]});', loaded);
+  expect(Array.from(c.result.plugins)).toEqual(loaded
+    ? ['parser', 'gfm', 'brackets', 'math', 'bridge', 'existing', 'katex']
+    : ['parser', 'gfm', 'bridge', 'existing']);
+  expect(c.result.value).toBe('text');
+});
+
+test.each([
+  SPLIT_MARKDOWN.replace('function build(p)', 'const build=(p)=>').replace('}\nfunction M', '};\nfunction M'),
+  SPLIT_MARKDOWN.replace('processor.runSync(processor.parse(p.children))', 'processor.runSync(tree)').replace('return processor.runSync', 'const tree=processor.parse(p.children);return processor.runSync'),
+  SPLIT_MARKDOWN.replace('const remark=p.remarkPlugins||[],rehype=p.rehypePlugins||[],options=p.remarkRehypeOptions;', 'const props=p;const remark=props.remarkPlugins??[],rehype=props.rehypePlugins??[],options=props.remarkRehypeOptions;'),
+])('split builders tolerate compiler variations', source => {
+  const c = evaluateProcessor(source + ';var result=M({children:"text"});');
+  expect(Array.from(c.result.plugins)).toEqual(['parser', 'brackets', 'math', 'bridge', 'katex']);
+});
+
+test.each([
+  SPLIT_MARKDOWN.slice(0, SPLIT_MARKDOWN.indexOf('function M')),
+  SPLIT_MARKDOWN.replace('const processor=build(p);', 'let processor=build(p);processor=unknown;'),
+  SPLIT_MARKDOWN.replace('const processor=build(p);', 'build=unknown;const processor=build(p);'),
+  SPLIT_MARKDOWN.replace('processor.parse(p.children)', 'other.parse(p.children)'),
+  SPLIT_MARKDOWN.replace('processor.runSync', 'other.runSync'),
+  SPLIT_MARKDOWN.replace('build(p);return', 'build(p,unknown);return'),
+  SPLIT_MARKDOWN.replace('options=p.remarkRehypeOptions', 'options=unrelated.remarkRehypeOptions'),
+  SPLIT_MARKDOWN.replace('rehype=p.rehypePlugins', 'rehype=unrelated.rehypePlugins'),
+  SPLIT_MARKDOWN.replace('return unified()', 'if(p.other)return unknown;return unified()'),
+  SPLIT_MARKDOWN + SPLIT_MARKDOWN.replace(/\b(build|M)\b/g, '$1Other'),
+])('split builders reject unused, mutable or unproven pipelines', source => {
+  expect(injectMathPlugins(source)).toBeNull();
+});
+
 function evaluateProcessor(source, loaded = true) {
   const patched = injectMathPlugins(source);
   expect(patched).not.toBeNull();
