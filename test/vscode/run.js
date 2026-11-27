@@ -118,7 +118,7 @@ async function upstream(temp) {
     await poll(() => fs.readFileSync(bundle, 'utf8').includes(`katex-ext-version: ${candidate}`), 'packaged candidate activation');
     let source = fs.readFileSync(bundle, 'utf8');
     if (source.includes(PROBE_MARKER)) throw new Error('Unexpected pre-existing test hook');
-    fs.appendFileSync(bundle, '\n' + chatProbe(source));
+    fs.writeFileSync(bundle, chatProbe(source, fs.readFileSync(bundle + '.katex-bak', 'utf8')));
     await poll(() => control({ command: 'ready' }), 'VS Code extension API driver');
     await control({ command: 'workbench.action.reloadWindow' }); await pause(3500);
     await poll(() => control({ command: 'ready' }), 'reloaded VS Code extension host');
@@ -129,8 +129,11 @@ async function upstream(temp) {
       for (const f of page.frames()) { try { if (await f.evaluate(() => !!window.__KATEX_CHAT_PROBE)) candidates.push({ f, width: await f.evaluate(() => innerWidth) }); } catch {} }
       return candidates.sort((a, b) => b.width - a.width)[0]?.f;
     }, 'actual Claude chat probe');
-    const render = async (content, streaming, native = true) => {
-      await frame.evaluate(({ content, streaming, native }) => window.__KATEX_CHAT_PROBE.render(content, streaming, native), { content, streaming, native });
+    report.phase = 'adapter-context';
+    report.adapter = await frame.evaluate(() => window.__KATEX_CHAT_PROBE.describe());
+    report.phase = 'native-fallback';
+    const render = async (content, streaming) => {
+      await frame.evaluate(({ content, streaming }) => window.__KATEX_CHAT_PROBE.render(content, streaming), { content, streaming });
       await poll(() => frame.evaluate(() => window.__KATEX_CHAT_PROBE.committed === window.__KATEX_CHAT_PROBE.serial), 'React chat commit');
       await frame.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
       return frame.evaluate(() => {
@@ -146,13 +149,17 @@ async function upstream(temp) {
     report.hasNativeGate = await frame.evaluate(() => window.__KATEX_CHAT_PROBE.hasNativeGate);
     if (report.hasNativeGate) {
       await frame.evaluate(() => { window.__KATEX_V2_LOADED = false; });
-      await render('Native fallback $x^2$ and $y^2$.');
-      const fallback = await poll(async () => { const s = await render('Native fallback $x^2$ and $y^2$.'); return s.count === 2 && s; }, 'native-only renderer');
-      check(fallback.native && !fallback.crashed, 'native fallback when injected runtime is unavailable');
+      const nativeDecision = await frame.evaluate(() => window.__KATEX_CHAT_PROBE.verifyNativeFallback());
+      check(typeof nativeDecision === 'boolean', 'actual upstream context exposes a native math decision', { nativeDecision });
+      const fallback = await poll(async () => {
+        const s = await render('Native fallback $x^2$ and $y^2$.');
+        return s.count === (nativeDecision ? 2 : 0) && s;
+      }, 'native-only renderer');
+      check(fallback.native === nativeDecision && !fallback.crashed && !fallback.errors, 'native fallback when injected runtime is unavailable');
       await frame.evaluate(() => { window.__KATEX_V2_LOADED = true; });
-      check(await frame.evaluate(() => window.__KATEX_CHAT_PROBE.gate(true) === false), 'only injected renderer owns math while loaded');
-      check(await frame.evaluate(() => window.__KATEX_CHAT_PROBE.gate(false) === false), 'upstream disabled gate stays disabled');
+      check(await frame.evaluate(() => window.__KATEX_CHAT_PROBE.gate() === false), 'only injected renderer owns math while loaded');
     }
+    report.phase = 'chat-rendering';
     for (const test of cases) for (const streaming of [undefined, 'allText']) {
       const s = await render(test.markdown, streaming);
       check(!s.crashed && !s.errors && s.count === test.count && (!test.tables || s.tables === test.tables) &&
@@ -213,6 +220,7 @@ async function upstream(temp) {
     if (report.cases.some(c => !c.passed)) throw new Error('Desktop chat regression checks failed');
     console.log(`Desktop VS Code ${vscodeVersion}, Claude ${version}, packaged extension ${candidate}: ${report.cases.length} checks passed.`);
   } catch (error) {
+    report.failurePhase = report.phase || 'activation';
     report.failure = error.stack;
     if (page) { try { await page.screenshot({ path: path.join(out, 'failure.png') }); } catch {} }
     throw error;

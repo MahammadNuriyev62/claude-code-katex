@@ -33,7 +33,8 @@ async function run(config) {
   // The adapter is part of the original test fixture in both windows so the
   // window that loads it before patching can be compared after automatic reload.
   const original = fs.readFileSync(bundle, 'utf8');
-  fs.appendFileSync(bundle, '\n' + chatProbe(original));
+  const instrumented = chatProbe(original);
+  fs.writeFileSync(bundle, instrumented);
   const check = (ok, name, detail) => {
     report.cases.push({ name, passed: !!ok, detail });
     console.log((ok ? 'PASS ' : 'FAIL ') + name + (detail ? ': ' + JSON.stringify(detail) : ''));
@@ -86,7 +87,7 @@ $$\begin{pmatrix}1&2\\3&4\end{pmatrix}$$`;
     return f.evaluate(() => ({ loaded: !!window.__KATEX_V2_LOADED,
       math: document.querySelectorAll('#katex-chat-output .katex').length,
       errors: document.querySelectorAll('#katex-chat-output .katex-error').length,
-      native: window.__KATEX_CHAT_PROBE.gate(true),
+      native: window.__KATEX_CHAT_PROBE.gate(),
       text: document.querySelector('#katex-chat-output').innerText }));
   }
   try {
@@ -108,7 +109,7 @@ $$\begin{pmatrix}1&2\\3&4\end{pmatrix}$$`;
         instance.role + ' automatically loads the packaged pipeline and renders all samples', state);
       await instance.page.screenshot({ path: path.join(out, instance.role + '-recovered.png') });
     }
-    check(fs.readFileSync(bundle + '.katex-bak', 'utf8') === original + '\n' + chatProbe(original),
+    check(fs.readFileSync(bundle + '.katex-bak', 'utf8') === instrumented,
       'the losing writer preserves the winning original backup');
     if (report.cases.some(c => !c.passed)) throw new Error('Startup recovery checks failed');
     console.log('Both desktop windows recovered without manual reload.');

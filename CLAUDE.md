@@ -242,7 +242,14 @@ The existing installed app can be selected with `VSCODE_EXECUTABLE`.
 The test-only adapter in `test/vscode/chat-probe.js` structurally finds the
 original upstream chat Markdown component, JSX/root factories, error boundary,
 and native feature-gate getter. It supplies deterministic fixture messages to
-that component inside Claude's real webview, including the exact #24 crash,
+that component using the actual context instance constructed by Claude's app.
+A test-only class initializer captures the instance, preserving private fields
+and computed signals without mocking settings paths or invoking constructors.
+Missing or ambiguous instances fail with adapter diagnostics. The fixtures
+compare native fallback against a pristine getter preserved inside the same
+class, so a broken packaged guard cannot define its own expected result.
+Unsupported native getter layouts fail explicitly instead of selecting legacy
+coverage. Fixtures include the exact #24 crash,
 long tables/math, streamed prefixes, tall inline formulas, and lists. Unknown
 adapter layouts fail instead of silently dropping coverage. No replacement
 Markdown renderer or minified function names are used. The adapter and a small
@@ -264,9 +271,11 @@ No manual reload is issued by this test. Scheduling gates and the labelled chat
 adapter live under `test/` and never ship in the VSIX. Latest CI checks both source
 and published VSIXs this way.
 
-CI runs desktop tests on pinned pre-native 2.1.299, first-native 2.1.301 and latest
-Claude Code, plus pinned 2.1.314 for destructured options (scheduled runs: latest
-only), with source and published VSIX probes.
+CI runs desktop tests on pre-native 2.1.299, first-native 2.1.301, destructured
+options 2.1.314, module webviews 2.1.331, computed settings 2.1.332, and latest
+(scheduled runs: latest only). A separate job tests the latest published VSIX,
+including on PRs, independently of candidate failures. Adapter contract tests
+cover settings rearrangements, private fields, and enabled/disabled native gates.
 The downloader pins the version resolved from Open VSX's platform metadata and
 verifies its checksum, avoiding a stale gallery search selecting an older build.
 
